@@ -42,12 +42,12 @@ The model uses the following **25 features**, all commonly accessible in routine
 | `MON` | Monocyte count (×10⁹/L) | Numeric |
 | `Pulmonary disease` | Presence of pulmonary disease (Yes/No) | Binary |
 | `EGFR` | Estimated glomerular filtration rate (mL/min/1.73m²) | Numeric |
-| `CRP` | C‑reactive protein (mg/L) | Numeric |
+| `CRP` | C‑reactive protein (mg/dL) | Numeric |
 | `CANCER` | History of cancer (Yes/No) | Binary |
-| `UA` | Uric acid (µmol/L) | Numeric |
+| `UA` | Uric acid (mg/dL) | Numeric |
 | `SHR` | Stress‑hyperglycemia ratio | Numeric |
 | `BMI` | Body mass index (kg/m²) | Numeric |
-| `TC` | Total cholesterol (mmol/L) | Numeric |
+| `TC` | Total cholesterol (mg/dL) | Numeric |
 | `EDU` | Education level | Categorical |
 | `AST` | Aspartate aminotransferase (U/L) | Numeric |
 
