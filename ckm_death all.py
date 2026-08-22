@@ -16,56 +16,8 @@ st.set_page_config(
     page_title="All-Cause Mortality Risk Prediction",
     page_icon="🫀",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
-
-# Ultra-compact CSS for A4-like fit
-st.markdown("""
-    <style>
-    .block-container {
-        padding-top: 0.5rem !important;
-        padding-bottom: 0.5rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 1.3rem;
-    }
-    h1, h2, h3, .stMarkdown h3 {
-        padding-top: 0.2rem !important;
-        padding-bottom: 0.2rem !important;
-        margin-top: 0 !important;
-        margin-bottom: 0 !important;
-        font-size: 1.2rem !important;
-    }
-    div.stExpander {
-        margin-top: 0 !important;
-        margin-bottom: 0 !important;
-    }
-    .stButton button {
-        padding: 0.2rem 0.5rem;
-        font-size: 0.9rem;
-    }
-    .stSelectbox, .stNumberInput {
-        margin-bottom: 0.2rem !important;
-    }
-    .stRadio > div {
-        gap: 0.3rem;
-    }
-    .stRadio label {
-        font-size: 0.8rem;
-    }
-    .stColumn {
-        padding: 0 0.2rem !important;
-    }
-    .stMarkdown {
-        font-size: 0.9rem;
-    }
-    .small-font {
-        font-size: 0.8rem;
-    }
-    </style>
-""", unsafe_allow_html=True)
 
 # -------------------- Model path --------------------
 MODEL_DIR = '.'
@@ -74,7 +26,6 @@ MODEL_FILE = 'ENet_model.pkl'
 if not os.path.exists(os.path.join(MODEL_DIR, MODEL_FILE)):
     st.error(f"❌ Model file '{MODEL_FILE}' not found. Please ensure it is in the same directory.")
     sys.exit(f"Error: Model file '{MODEL_FILE}' not found.")
-
 
 # -------------------- Load Model Artifacts --------------------
 @st.cache_resource
@@ -85,8 +36,8 @@ def load_artifacts():
     except Exception as e:
         return None
 
-
 artifacts = load_artifacts()
+
 if artifacts is None:
     st.error(f"Failed to load the model file ({MODEL_FILE}). It might be corrupted or incompatible.")
     sys.exit("Error: Failed to load model.")
@@ -99,127 +50,115 @@ CATEGORICAL_FEATURES = artifacts.get('categorical_features')
 CONTINUOUS_FEATURES = artifacts.get('continuous_features')
 
 # -------------------- Display name and unit mappings --------------------
+# Continuous feature units
 unit_map = {
-    'AGE': 'years', 'PLT': '×10⁹/L', 'MCV': 'fL', 'RDW': '%', 'SII': '×10⁹/L',
-    'ABSI': '', 'HBA1C': '%', 'GLB': 'g/L', 'MON': '×10⁹/L', 'EGFR': 'mL/min/1.73m²',
-    'CRP': 'mg/dL', 'UA': 'mg/dL', 'SHR': '', 'BMI': 'kg/m²', 'TC': 'mg/dL', 'AST': 'U/L'
+    'AGE': 'years',
+    'PLT': '×10⁹/L',
+    'MCV': 'fL',
+    'RDW': '%',
+    'SII': '×10⁹/L',
+    'ABSI': '',
+    'HBA1C': '%',
+    'GLB': 'g/L',
+    'MON': '×10⁹/L',
+    'EGFR': 'mL/min/1.73m²',
+    'CRP': 'mg/dL',
+    'UA': 'mg/dL',
+    'SHR': '',
+    'BMI': 'kg/m²',
+    'TC': 'mg/dL',
+    'AST': 'U/L'
 }
 
+# Display labels for categorical features (if different from original)
 cat_display_label = {
     'GENDER': 'Sex',
     'CKM': 'CKM stage',
     'ACTIVITY': 'Moderate or vigorous activity',
     'PIR_GROUP': 'Poverty-income ratio category',
     'LUNG': 'Pulmonary disease',
-    'EDU': 'Education',
-    'RACE': 'Race/Ethnicity',
-    'MARITAL': 'Marital Status',
-    'CANCER': 'Cancer History'
+    'EDU': 'Education'
 }
 
+# Option mapping for selected categorical features (display text -> encoded value)
 cat_option_map = {
     'GENDER': {'Male': 1, 'Female': 2},
     'CKM': {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4},
     'ACTIVITY': {'Yes': 1, 'No': 0},
     'PIR_GROUP': {'<1.0': 1, '1.0-3.0': 2, '>3.0': 3},
     'LUNG': {'Yes': 1, 'No': 0},
-    'EDU': {'< High school': 1, 'High school': 2, 'Some college or above': 3},
-    'RACE': {
-        'Mexican American': 1,
-        'Other Hispanic': 2,
-        'Non-Hispanic White': 3,
-        'Non-Hispanic Black': 4,
-        'Other, Including Multi-Racial': 5
-    },
-    'MARITAL': {'Married or living with partner': 1, 'Others': 2},
-    'CANCER': {'Yes': 1, 'No': 0}
+    'EDU': {'< High school': 1, 'High school': 2, 'Some college or above': 3}
 }
 
+# Default physiological reference values for initialization
 default_cont_vals = {
     'AGE': 65.0, 'HBA1C': 5.6, 'ABSI': 0.08, 'EGFR': 90.0, 'RDW': 13.2,
     'SHR': 2.5, 'MCV': 92.0, 'GLB': 28.0, 'PLT': 250.0, 'CRP': 1.5,
-    'SII': 500.0, 'MON': 0.4, 'AST': 22.0, 'BMI': 24.5, 'TC': 185.0, 'UA': 5.0
+    'SII': 500.0, 'MON': 0.4, 'AST': 22.0, 'BMI': 24.5, 'TC': 185.0,
+    'UA': 5.0
 }
 
-
-# -------------------- Build display feature names --------------------
-def get_display_feature_names():
-    names = []
-    for col in CONTINUOUS_FEATURES:
-        unit = unit_map.get(col, '')
-        names.append(f"{col} ({unit})" if unit else col)
-    for col in CATEGORICAL_FEATURES:
-        names.append(cat_display_label.get(col, col))
-    return names
-
-
-DISPLAY_FEATURE_NAMES = get_display_feature_names()
-
 # -------------------- UI Layout --------------------
-st.markdown("### 🫀 All-Cause Mortality Risk Prediction (ElasticNet)")
+st.title("🫀 All-Cause Mortality Risk Prediction")
+st.markdown(
+    "**ElasticNet Survival Model** – Enter patient characteristics to estimate risk and explore feature contributions (SHAP).")
 
-col_left, col_right = st.columns([1.1, 1.3], gap="small")
-
+col_left, col_right = st.columns([1, 1.2], gap="large")
 input_data = {}
 
 with col_left:
-    st.markdown("**📝 Patient Characteristics**")
+    st.subheader("📝 Patient Characteristics")
 
+    # Categorical Features
     with st.expander("🏷️ Categorical Features", expanded=True):
-        cat_cols = st.columns(3)
+        col1, col2 = st.columns(2)
         for i, col in enumerate(CATEGORICAL_FEATURES):
             display_label = cat_display_label.get(col, col)
-            with cat_cols[i % 3]:
-                if col in cat_option_map:
-                    options = list(cat_option_map[col].keys())
-                    selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
-                    input_data[col] = cat_option_map[col][selected_text]
-                else:
-                    classes = label_encoders[col].classes_
-                    options = [str(cls) for cls in classes if str(cls) != 'nan']
-                    if not options:
-                        options = [str(cls) for cls in classes]
-                    selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
-                    input_data[col] = selected_text
+            if col in cat_option_map:
+                options = list(cat_option_map[col].keys())
+                selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
+                input_data[col] = cat_option_map[col][selected_text]
+            else:
+                options = [str(cls) for cls in label_encoders[col].classes_ if str(cls) != 'nan']
+                selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
+                input_data[col] = selected_text  # will transform later
 
+    # Continuous Features
     with st.expander("📈 Continuous Features", expanded=True):
-        cont_cols = st.columns(4)
+        col3, col4 = st.columns(2)
         for i, col in enumerate(CONTINUOUS_FEATURES):
             default_val = default_cont_vals.get(col, 50.0)
             unit = unit_map.get(col, '')
             label = f"{col} ({unit})" if unit else col
-            with cont_cols[i % 4]:
+            with col3 if i % 2 == 0 else col4:
                 input_data[col] = st.number_input(label, value=float(default_val),
-                                                  step=1.0 if default_val > 10 else 0.1,
-                                                  key=f"cont_{col}",
-                                                  format="%.1f" if default_val < 10 else "%.0f")
+                                                  step=1.0 if default_val > 10 else 0.1, key=f"cont_{col}")
 
-    st.markdown("**⏱ Prediction Time**")
+    # Prediction Time
+    st.subheader("⏱ Prediction Time")
     if 'time_years' not in st.session_state:
         st.session_state.time_years = 5.0
 
     t1, t2 = st.columns([2, 1])
     with t1:
-        st.radio("Quick select (Years)", options=[1, 3, 5, 10], index=2,
-                 horizontal=True, key="preset_time", label_visibility="collapsed")
+        st.radio("Quick select (Years)", options=[1, 3, 5, 10], index=2, horizontal=True, key="preset_time")
     with t2:
-        time_years = st.number_input("Custom years", min_value=0.5, max_value=30.0,
-                                     value=st.session_state.time_years,
-                                     step=0.5, key="time_input", label_visibility="collapsed")
+        time_years = st.number_input("Custom years", min_value=0.5, max_value=30.0, value=st.session_state.time_years,
+                                     step=0.5, key="time_input")
         st.session_state.time_years = time_years
 
-    predict_clicked = st.button("📊 Predict & Show SHAP", type="primary",
-                                use_container_width=True)
+    predict_clicked = st.button("📊 Predict Mortality Risk & Show SHAP", type="primary", use_container_width=True)
 
 # -------------------- Prediction & SHAP Results --------------------
 with col_right:
-    st.markdown("**📊 Results & Interpretation**")
+    st.subheader("📊 Prediction & Interpretation")
 
     if predict_clicked:
         try:
             # 1. Prepare Data
             df_input = pd.DataFrame([input_data])
 
+            # Encode categorical features
             cat_encoded = []
             for col in CATEGORICAL_FEATURES:
                 if col in cat_option_map:
@@ -232,70 +171,78 @@ with col_right:
 
             cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
             X_final = np.hstack([cont_scaled, cat_encoded])
+            final_feature_names = CONTINUOUS_FEATURES + CATEGORICAL_FEATURES
 
             # 2. Predict Survival
             surv_funcs = model.predict_survival_function(X_final)
             time_month = int(round(st.session_state.time_years * 12))
             max_train_month = int(surv_funcs[0].x[-1])
             if time_month > max_train_month:
-                st.warning(f"Requested time exceeds training follow-up. Capped to {max_train_month} months.")
+                st.warning(f"Requested time ({time_month} months) exceeds training follow-up. Capped to {max_train_month} months.")
                 time_month = max_train_month
 
             surv_prob = surv_funcs[0](time_month)
             risk = 1 - surv_prob
-            t_years = st.session_state.time_years
-
-            # Dynamic thresholds (based on 10‑year 7.5% and 20%)
-            threshold_low = (0.075 / 10.0) * t_years
-            threshold_high = (0.20 / 10.0) * t_years
 
             # Display Metrics
-            st.markdown(f"**Risk at {time_month} Months (~{t_years:.1f} Years)**")
+            st.markdown(f"### Risk at {time_month} Months (~{st.session_state.time_years:.1f} Years)")
             c_risk, c_surv = st.columns(2)
-            if risk < threshold_low:
+            if risk < 0.075:
                 color, level = "green", "Low"
-            elif risk < threshold_high:
-                color, level = "orange", "Intermediate"
+            elif risk < 0.20:
+                color, level = "orange", "Moderate"
             else:
                 color, level = "red", "High"
 
             with c_risk:
                 st.metric("Mortality Risk", f"{risk * 100:.1f}%")
-                st.markdown(
-                    f"<span style='color:{color}; font-weight:bold; font-size:14px'>{level} Risk (thresholds adjusted for {t_years:.1f}y)</span>",
-                    unsafe_allow_html=True)
+                st.markdown(f"<span style='color:{color}; font-weight:bold; font-size:18px'>{level} Risk</span>",
+                            unsafe_allow_html=True)
             with c_surv:
                 st.metric("Survival Probability", f"{surv_prob * 100:.1f}%")
 
-            # 3. Evidence‑Based Clinical Recommendations (AHA CKM Guidelines)
-            with st.expander("🩺 Evidence‑Based Clinical Recommendations", expanded=True):
-                st.caption(
-                    f"📝 *Based on AHA CKM Syndrome Guidelines. Risk thresholds dynamically adjusted for {t_years:.1f} years.*")
+            # 3. Clinical Recommendations (English)
+            st.markdown("### 🩺 Clinical Recommendations")
+            if risk < 0.075:
+                st.success("""
+                **📉 Low Risk Group (Predicted Probability < 7.5%)**  
+                **Core Strategy:** Primary prevention – maintain optimal cardiovascular health.
 
-                if risk < threshold_low:
-                    st.success(f"""
-                    **📉 Low Risk (< {threshold_low * 100:.1f}%)** —— **Primary Prevention & Lifestyle Intervention**
-                    - **Life's Essential 8**: Adopt Mediterranean or DASH diet; ≥150 min/week moderate‑intensity exercise; smoking cessation; maintain ideal weight and waist circumference.
-                    - **Routine Screening**: Re‑evaluate blood pressure, lipids, fasting glucose/HbA1c, and kidney function (eGFR and UACR) every 1‑3 years.
-                    - **Social Determinants (SDOH)**: Assess and address sleep quality, psychological stress, and other potential adverse factors.
-                    """)
-                elif risk < threshold_high:
-                    st.warning(f"""
-                    **📊 Intermediate Risk ({threshold_low * 100:.1f}% – < {threshold_high * 100:.1f}%)** —— **Shared Decision‑Making & Early Pharmacotherapy**
-                    - **Cardiovascular‑Kidney Protection**: If type 2 diabetes or CKD coexists, initiate **SGLT2 inhibitors** or **GLP‑1 RA** as recommended.
-                    - **Risk Factor Control**: Start moderate‑intensity statin; strictly control blood pressure (target <130/80 mmHg, preferably with ACEi/ARB).
-                    - **Comorbidity Screening**: Actively screen for MASLD and obstructive sleep apnea (OSA).
-                    """)
-                else:
-                    st.error(f"""
-                    **⚠️ High Risk (≥ {threshold_high * 100:.1f}%)** —— **Multidisciplinary Care & Guideline‑Directed Medical Therapy (GDMT)**
-                    - **MDT Management**: Strongly recommend a multidisciplinary team (cardiovascular, renal, endocrine) for individualized intervention.
-                    - **Intensified GDMT**: Full application of cardio‑renal protective agents (SGLT2i, ACEi/ARB, GLP‑1 RA, or ns‑MRA); intensive lipid‑lowering (high‑intensity statin, ± PCSK9i if needed).
-                    - **Close Follow‑up**: Monitor for CKM stages 3–4 (heart failure, advanced CKD); schedule target organ assessment every 3 months.
-                    """)
+                **Clinical Guidance:**
+                - **Continuous Monitoring:** Routine screening for metabolic risk factors and renal function is recommended for all adults.
+                - **Healthy Lifestyle:** Emphasize maintaining normal weight, blood glucose, blood pressure, and lipids through lifestyle interventions (e.g., balanced diet, regular exercise).
+                - **Assess Social Determinants of Health (SDOH):** Screen and intervene for unfavorable SDOH, which is a core component of holistic care.
+                """)
+            elif risk < 0.20:
+                st.warning("""
+                **📊 Moderate Risk Group (Predicted Probability 7.5% – < 20%)**  
+                **Core Strategy:** Initiate pharmacological intervention, prioritizing medications with cardiorenal protective effects.
 
-            # 4. SHAP Interpretation (Local)
-            st.markdown("**🔍 SHAP Interpretation (Local)**")
+                **Clinical Guidance:**
+                - **Initiate Cardiorenal Protective Medications:** For patients with type 2 diabetes or high cardiovascular risk, consider Sodium‑Glucose Cotransporter‑2 inhibitors (SGLT2i) or Glucagon‑Like Peptide‑1 Receptor Agonists (GLP‑1 RA).
+                - **Intensive Lifestyle Intervention:** Combine lifestyle modifications with weight‑loss medications when appropriate.
+                - **Assess CKM‑related Comorbidities:** Evaluate for pre‑heart failure, Metabolic Dysfunction‑Associated Steatotic Liver Disease (MASLD), Obstructive Sleep Apnea (OSA), etc.
+                """)
+            else:
+                st.error("""
+                **⚠️ High Risk Group (Predicted Probability ≥ 20%)**  
+                **Core Strategy:** Intensify multidisciplinary comprehensive management – this risk level is one of the criteria for defining Stage 3 CKM syndrome.
+
+                **Clinical Guidance:**
+                - **Initiate Multidisciplinary Collaboration:** Requires coordinated care among cardiology, nephrology, endocrinology, and other specialists (MDT).
+                - **Implement Guideline‑Directed Medical Therapy (GDMT):**
+                  - *Blood Pressure:* Based on Renin‑Angiotensin System inhibitors (RASi).
+                  - *Blood Glucose:* Prioritize SGLT2i and GLP‑1 RA.
+                  - *Lipids:* Statin therapy as the cornerstone.
+                - **Close Follow‑up:** Patients with CKM syndrome stages 2–4 should be followed at least 4 times per year.
+                """)
+
+            st.divider()
+
+            # 4. SHAP Interpretation – Global & Local plots
+            st.markdown("### 🔍 Model Interpretation (SHAP)")
+            st.caption("Global feature importance (ordered by external test set, if available) and local explanation for this patient.")
+
             coefs = model.coef_
             if coefs.ndim > 1:
                 coefs = coefs[:, 0]
@@ -303,7 +250,7 @@ with col_right:
             contributions = X_final[0] * coefs
             base_value = 0.0
 
-            # Build display data
+            # Build display data (user-friendly values)
             display_data = []
             for col in CONTINUOUS_FEATURES:
                 display_data.append(df_input[col].iloc[0])
@@ -319,35 +266,54 @@ with col_right:
                 values=contributions,
                 base_values=base_value,
                 data=display_data,
-                feature_names=DISPLAY_FEATURE_NAMES
+                feature_names=final_feature_names
             )
 
-            # Top 15 features
-            importance_vals = np.abs(contributions)
-            sorted_idx = np.argsort(importance_vals)[::-1][:15]
-            sorted_names = [DISPLAY_FEATURE_NAMES[i] for i in sorted_idx]
+            # ---- Global Feature Importance Bar Plot ----
+            # Priority: external test set -> training set -> local absolute values
+            importance_vals = None
+            importance_source = None
+
+            if 'external_shap_importance' in artifacts and artifacts['external_shap_importance'] is not None:
+                importance_vals = artifacts['external_shap_importance']
+                importance_source = "External Test Cohort"
+            elif 'global_shap_importance' in artifacts and artifacts['global_shap_importance'] is not None:
+                importance_vals = artifacts['global_shap_importance']
+                importance_source = "Training Cohort"
+            else:
+                # Fallback: use current patient's absolute SHAP values
+                importance_vals = np.abs(contributions)
+                importance_source = "Current Patient (local)"
+
+            # Ensure importance_vals length matches number of features
+            if len(importance_vals) != len(final_feature_names):
+                st.warning("Importance values length mismatch. Falling back to local values.")
+                importance_vals = np.abs(contributions)
+                importance_source = "Current Patient (local)"
+
+            # Sort descending
+            sorted_idx = np.argsort(importance_vals)[::-1]
+            sorted_names = [final_feature_names[i] for i in sorted_idx]
             sorted_vals = importance_vals[sorted_idx]
 
-            chart_col1, chart_col2 = st.columns(2)
-            with chart_col1:
-                fig_imp, ax_imp = plt.subplots(figsize=(4.5, 3.5))
-                ax_imp.barh(sorted_names[::-1], sorted_vals[::-1], color='#1f77b4')
-                ax_imp.set_xlabel('|SHAP|', fontsize=8)
-                ax_imp.set_title('Top 15 Feature Importance', fontsize=9)
-                ax_imp.tick_params(labelsize=7)
-                plt.tight_layout()
-                st.pyplot(fig_imp, bbox_inches='tight')
-                plt.clf()
+            fig_imp, ax_imp = plt.subplots(figsize=(8, 5))
+            ax_imp.barh(sorted_names, sorted_vals, color='#1f77b4')
+            ax_imp.set_xlabel('mean(|SHAP value|)')
+            ax_imp.set_title(f'Feature Importance ({importance_source})')
+            st.pyplot(fig_imp, bbox_inches='tight')
+            plt.clf()
 
-            with chart_col2:
-                fig_wf, ax_wf = plt.subplots(figsize=(4.5, 3.5))
-                shap.plots.waterfall(explanation, max_display=15, show=False)
-                plt.tick_params(labelsize=7)
-                plt.tight_layout()
-                st.pyplot(fig_wf, bbox_inches='tight')
-                plt.clf()
+            st.divider()
 
-            # Force plot (compact)
+            # ---- Waterfall Plot ----
+            st.markdown("#### SHAP Waterfall Plot (Local Interpretation)")
+            fig_wf, ax_wf = plt.subplots(figsize=(8, 5))
+            shap.plots.waterfall(explanation, max_display=12, show=False)
+            st.pyplot(fig_wf, bbox_inches='tight')
+            plt.clf()
+
+            # ---- Force Plot ----
+            st.markdown("#### SHAP Force Plot (Interactive)")
             try:
                 shap_force = shap.plots.force(
                     explanation.base_values,
@@ -362,11 +328,15 @@ with col_right:
                 else:
                     force_html = str(shap_force)
                 shap_html = f"<head>{shap.getjs()}</head><body>{force_html}</body>"
-                components.html(shap_html, height=160, scrolling=False)
+                components.html(shap_html, height=400, scrolling=True)
             except Exception as e:
-                st.warning(f"Force plot error: {e}")
+                st.warning(f"Force plot could not be rendered: {e}")
 
         except Exception as e:
             st.error(f"Prediction error: {e}")
+            st.info("Please verify your inputs and ensure 'ENet_model.pkl' is correctly generated.")
     else:
-        st.info("👈 Fill in patient characteristics and click **Predict** to view results.")
+        st.info("👈 Fill in patient characteristics and click **Predict** to view Risk, Guidelines, and SHAP plots.")
+
+st.divider()
+st.caption(f"Model File: {MODEL_FILE} · Engine: ElasticNet Survival Analysis · Includes SHAP Interpretations")
