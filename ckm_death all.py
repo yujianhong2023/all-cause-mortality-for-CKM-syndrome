@@ -45,12 +45,38 @@ if artifacts is None:
 model = artifacts.get('model')
 scaler = artifacts.get('scaler')
 label_encoders = artifacts.get('label_encoders')
-FEATURES = artifacts.get('features')
-CATEGORICAL_FEATURES = artifacts.get('categorical_features')
-CONTINUOUS_FEATURES = artifacts.get('continuous_features')
+FEATURES_FROM_MODEL = artifacts.get('features')
+CATEGORICAL_FEATURES_FROM_MODEL = artifacts.get('categorical_features')
+CONTINUOUS_FEATURES_FROM_MODEL = artifacts.get('continuous_features')
+
+# -------------------- Define complete feature lists (with new variables) --------------------
+# 所有连续特征（保持原有）
+CONTINUOUS_FEATURES = [
+    'AGE', 'PLT', 'MCV', 'RDW', 'SII', 'ABSI', 'HBA1C', 'GLB',
+    'MON', 'EGFR', 'CRP', 'UA', 'SHR', 'BMI', 'TC', 'AST'
+]
+
+# 所有分类特征（原有6个 + 新增3个）
+CATEGORICAL_FEATURES = [
+    'GENDER', 'CKM', 'ACTIVITY', 'PIR_GROUP', 'LUNG', 'EDU',
+    'RACE', 'MARITAL', 'CANCER'
+]
+
+FEATURES = CONTINUOUS_FEATURES + CATEGORICAL_FEATURES
+
+# 校验加载的模型特征是否与定义完全一致（顺序必须匹配）
+if FEATURES_FROM_MODEL is None or list(FEATURES_FROM_MODEL) != FEATURES:
+    st.error(
+        f"❌ Model feature mismatch!\n"
+        f"Expected: {FEATURES}\n"
+        f"Got from model: {FEATURES_FROM_MODEL}\n\n"
+        "Please retrain the model with the updated feature set (including RACE, MARITAL, CANCER) "
+        "and regenerate 'ENet_model.pkl'."
+    )
+    sys.exit("Feature mismatch. Aborting.")
 
 # -------------------- Display name and unit mappings --------------------
-# Continuous feature units
+# 连续特征单位
 unit_map = {
     'AGE': 'years',
     'PLT': '×10⁹/L',
@@ -70,27 +96,39 @@ unit_map = {
     'AST': 'U/L'
 }
 
-# Display labels for categorical features (if different from original)
+# 分类特征显示标签
 cat_display_label = {
     'GENDER': 'Sex',
     'CKM': 'CKM stage',
     'ACTIVITY': 'Moderate or vigorous activity',
     'PIR_GROUP': 'Poverty-income ratio category',
     'LUNG': 'Pulmonary disease',
-    'EDU': 'Education'
+    'EDU': 'Education',
+    'RACE': 'Race/Ethnicity',
+    'MARITAL': 'Married or living with partner',
+    'CANCER': 'Cancer diagnosis'
 }
 
-# Option mapping for selected categorical features (display text -> encoded value)
+# 选项映射（显示文本 -> 编码值）
 cat_option_map = {
     'GENDER': {'Male': 1, 'Female': 2},
     'CKM': {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4},
     'ACTIVITY': {'Yes': 1, 'No': 0},
     'PIR_GROUP': {'<1.0': 1, '1.0-3.0': 2, '>3.0': 3},
     'LUNG': {'Yes': 1, 'No': 0},
-    'EDU': {'< High school': 1, 'High school': 2, 'Some college or above': 3}
+    'EDU': {'< High school': 1, 'High school': 2, 'Some college or above': 3},
+    'RACE': {
+        'Mexican American': 1,
+        'Other Hispanic': 2,
+        'Non-Hispanic White': 3,
+        'Non-Hispanic Black': 4,
+        'Other, Including Multi-Racial': 5
+    },
+    'MARITAL': {'Yes': 1, 'No': 2},
+    'CANCER': {'Yes': 1, 'No': 0}
 }
 
-# Default physiological reference values for initialization
+# 连续特征默认参考值（用于初始化输入框）
 default_cont_vals = {
     'AGE': 65.0, 'HBA1C': 5.6, 'ABSI': 0.08, 'EGFR': 90.0, 'RDW': 13.2,
     'SHR': 2.5, 'MCV': 92.0, 'GLB': 28.0, 'PLT': 250.0, 'CRP': 1.5,
@@ -114,14 +152,10 @@ with col_left:
         col1, col2 = st.columns(2)
         for i, col in enumerate(CATEGORICAL_FEATURES):
             display_label = cat_display_label.get(col, col)
-            if col in cat_option_map:
-                options = list(cat_option_map[col].keys())
-                selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
-                input_data[col] = cat_option_map[col][selected_text]
-            else:
-                options = [str(cls) for cls in label_encoders[col].classes_ if str(cls) != 'nan']
-                selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
-                input_data[col] = selected_text  # will transform later
+            # 所有分类特征均使用 cat_option_map 编码，无需 label_encoders
+            options = list(cat_option_map[col].keys())
+            selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
+            input_data[col] = cat_option_map[col][selected_text]
 
     # Continuous Features
     with st.expander("📈 Continuous Features", expanded=True):
@@ -158,17 +192,14 @@ with col_right:
             # 1. Prepare Data
             df_input = pd.DataFrame([input_data])
 
-            # Encode categorical features
+            # 编码分类特征（所有均在 cat_option_map 中）
             cat_encoded = []
             for col in CATEGORICAL_FEATURES:
-                if col in cat_option_map:
-                    val = df_input[col].iloc[0]
-                    cat_encoded.append(int(val))
-                else:
-                    val_str = df_input[col].iloc[0]
-                    cat_encoded.append(label_encoders[col].transform([val_str])[0])
+                val = df_input[col].iloc[0]
+                cat_encoded.append(int(val))
             cat_encoded = np.array(cat_encoded).reshape(1, -1)
 
+            # 标准化连续特征
             cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
             X_final = np.hstack([cont_scaled, cat_encoded])
             final_feature_names = CONTINUOUS_FEATURES + CATEGORICAL_FEATURES
@@ -255,12 +286,9 @@ with col_right:
             for col in CONTINUOUS_FEATURES:
                 display_data.append(df_input[col].iloc[0])
             for col in CATEGORICAL_FEATURES:
-                if col in cat_option_map:
-                    val = df_input[col].iloc[0]
-                    inv_map = {v: k for k, v in cat_option_map[col].items()}
-                    display_data.append(inv_map.get(val, str(val)))
-                else:
-                    display_data.append(df_input[col].iloc[0])
+                val = df_input[col].iloc[0]
+                inv_map = {v: k for k, v in cat_option_map[col].items()}
+                display_data.append(inv_map.get(val, str(val)))
 
             explanation = shap.Explanation(
                 values=contributions,
@@ -270,7 +298,6 @@ with col_right:
             )
 
             # ---- Global Feature Importance Bar Plot ----
-            # Priority: external test set -> training set -> local absolute values
             importance_vals = None
             importance_source = None
 
@@ -281,17 +308,14 @@ with col_right:
                 importance_vals = artifacts['global_shap_importance']
                 importance_source = "Training Cohort"
             else:
-                # Fallback: use current patient's absolute SHAP values
                 importance_vals = np.abs(contributions)
                 importance_source = "Current Patient (local)"
 
-            # Ensure importance_vals length matches number of features
             if len(importance_vals) != len(final_feature_names):
                 st.warning("Importance values length mismatch. Falling back to local values.")
                 importance_vals = np.abs(contributions)
                 importance_source = "Current Patient (local)"
 
-            # Sort descending
             sorted_idx = np.argsort(importance_vals)[::-1]
             sorted_names = [final_feature_names[i] for i in sorted_idx]
             sorted_vals = importance_vals[sorted_idx]
