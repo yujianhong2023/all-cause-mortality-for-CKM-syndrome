@@ -7,6 +7,7 @@ import pandas as pd
 import warnings
 import matplotlib.pyplot as plt
 import shap
+import streamlit.components.v1 as components
 
 warnings.filterwarnings('ignore')
 
@@ -48,6 +49,47 @@ FEATURES = artifacts.get('features')
 CATEGORICAL_FEATURES = artifacts.get('categorical_features')
 CONTINUOUS_FEATURES = artifacts.get('continuous_features')
 
+# -------------------- Display name and unit mappings --------------------
+# Continuous feature units
+unit_map = {
+    'AGE': 'years',
+    'PLT': '×10⁹/L',
+    'MCV': 'fL',
+    'RDW': '%',
+    'SII': '×10⁹/L',
+    'ABSI': '',
+    'HBA1C': '%',
+    'GLB': 'g/L',
+    'MON': '×10⁹/L',
+    'EGFR': 'mL/min/1.73m²',
+    'CRP': 'mg/dL',
+    'UA': 'mg/dL',
+    'SHR': '',
+    'BMI': 'kg/m²',
+    'TC': 'mg/dL',
+    'AST': 'U/L'
+}
+
+# Display labels for categorical features (if different from original)
+cat_display_label = {
+    'GENDER': 'Sex',
+    'CKM': 'CKM stage',
+    'ACTIVITY': 'Moderate or vigorous activity',
+    'PIR_GROUP': 'Poverty-income ratio category',
+    'LUNG': 'Pulmonary disease',
+    'EDU': 'Education'
+}
+
+# Option mapping for selected categorical features (display text -> encoded value)
+cat_option_map = {
+    'GENDER': {'Male': 1, 'Female': 2},
+    'CKM': {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4},
+    'ACTIVITY': {'Yes': 1, 'No': 0},
+    'PIR_GROUP': {'<1.0': 1, '1.0-3.0': 2, '>3.0': 3},
+    'LUNG': {'Yes': 1, 'No': 0},
+    'EDU': {'< High school': 1, 'High school': 2, 'Some college or above': 3}
+}
+
 # Default physiological reference values for initialization
 default_cont_vals = {
     'AGE': 65.0, 'HBA1C': 5.6, 'ABSI': 0.08, 'EGFR': 90.0, 'RDW': 13.2,
@@ -71,20 +113,25 @@ with col_left:
     with st.expander("🏷️ Categorical Features", expanded=True):
         col1, col2 = st.columns(2)
         for i, col in enumerate(CATEGORICAL_FEATURES):
-            options = [str(cls) for cls in label_encoders[col].classes_ if str(cls) != 'nan']
-            with col1 if i % 2 == 0 else col2:
-                input_data[col] = st.selectbox(f"{col}", options, key=f"cat_{col}")
+            display_label = cat_display_label.get(col, col)
+            if col in cat_option_map:
+                options = list(cat_option_map[col].keys())
+                selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
+                input_data[col] = cat_option_map[col][selected_text]
+            else:
+                options = [str(cls) for cls in label_encoders[col].classes_ if str(cls) != 'nan']
+                selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
+                input_data[col] = selected_text  # will transform later
 
     # Continuous Features
     with st.expander("📈 Continuous Features", expanded=True):
         col3, col4 = st.columns(2)
         for i, col in enumerate(CONTINUOUS_FEATURES):
             default_val = default_cont_vals.get(col, 50.0)
-            display_label = f"{col}"
-            if col in ['CRP', 'UA', 'TC']:
-                display_label += " (mg/dL)"
+            unit = unit_map.get(col, '')
+            label = f"{col} ({unit})" if unit else col
             with col3 if i % 2 == 0 else col4:
-                input_data[col] = st.number_input(display_label, value=float(default_val),
+                input_data[col] = st.number_input(label, value=float(default_val),
                                                   step=1.0 if default_val > 10 else 0.1, key=f"cont_{col}")
 
     # Prediction Time
@@ -110,24 +157,28 @@ with col_right:
         try:
             # 1. Prepare Data
             df_input = pd.DataFrame([input_data])
-            cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
 
+            # Encode categorical features
             cat_encoded = []
             for col in CATEGORICAL_FEATURES:
-                cat_encoded.append(label_encoders[col].transform([df_input[col].iloc[0]])[0])
+                if col in cat_option_map:
+                    val = df_input[col].iloc[0]
+                    cat_encoded.append(int(val))
+                else:
+                    val_str = df_input[col].iloc[0]
+                    cat_encoded.append(label_encoders[col].transform([val_str])[0])
             cat_encoded = np.array(cat_encoded).reshape(1, -1)
 
+            cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
             X_final = np.hstack([cont_scaled, cat_encoded])
             final_feature_names = CONTINUOUS_FEATURES + CATEGORICAL_FEATURES
 
             # 2. Predict Survival
             surv_funcs = model.predict_survival_function(X_final)
             time_month = int(round(st.session_state.time_years * 12))
-
             max_train_month = int(surv_funcs[0].x[-1])
             if time_month > max_train_month:
-                st.warning(
-                    f"Requested time ({time_month} months) exceeds training follow-up. Capped to {max_train_month} months.")
+                st.warning(f"Requested time ({time_month} months) exceeds training follow-up. Capped to {max_train_month} months.")
                 time_month = max_train_month
 
             surv_prob = surv_funcs[0](time_month)
@@ -135,7 +186,6 @@ with col_right:
 
             # Display Metrics
             st.markdown(f"### Risk at {time_month} Months (~{st.session_state.time_years:.1f} Years)")
-
             c_risk, c_surv = st.columns(2)
             if risk < 0.075:
                 color, level = "green", "Low"
@@ -151,9 +201,8 @@ with col_right:
             with c_surv:
                 st.metric("Survival Probability", f"{surv_prob * 100:.1f}%")
 
-            # 3. Clinical Recommendations based on Risk Level (English version)
+            # 3. Clinical Recommendations (English)
             st.markdown("### 🩺 Clinical Recommendations")
-
             if risk < 0.075:
                 st.success("""
                 **📉 Low Risk Group (Predicted Probability < 7.5%)**  
@@ -190,35 +239,98 @@ with col_right:
 
             st.divider()
 
-            # 4. SHAP Interpretation (Waterfall only)
+            # 4. SHAP Interpretation – Global & Local plots
             st.markdown("### 🔍 Model Interpretation (SHAP)")
-            st.caption("How each feature contributes to the patient's individual log‑hazard score.")
+            st.caption("Global feature importance (ordered by external test set, if available) and local explanation for this patient.")
 
             coefs = model.coef_
             if coefs.ndim > 1:
                 coefs = coefs[:, 0]
 
             contributions = X_final[0] * coefs
+            base_value = 0.0
 
+            # Build display data (user-friendly values)
             display_data = []
             for col in CONTINUOUS_FEATURES:
                 display_data.append(df_input[col].iloc[0])
             for col in CATEGORICAL_FEATURES:
-                display_data.append(df_input[col].iloc[0])
+                if col in cat_option_map:
+                    val = df_input[col].iloc[0]
+                    inv_map = {v: k for k, v in cat_option_map[col].items()}
+                    display_data.append(inv_map.get(val, str(val)))
+                else:
+                    display_data.append(df_input[col].iloc[0])
 
             explanation = shap.Explanation(
                 values=contributions,
-                base_values=0.0,
+                base_values=base_value,
                 data=display_data,
                 feature_names=final_feature_names
             )
 
-            # SHAP Waterfall Plot
-            st.markdown("#### SHAP Waterfall Plot")
-            fig_waterfall, ax = plt.subplots(figsize=(8, 5))
-            shap.plots.waterfall(explanation, max_display=12, show=False)
-            st.pyplot(fig_waterfall, bbox_inches='tight')
+            # ---- Global Feature Importance Bar Plot ----
+            # Priority: external test set -> training set -> local absolute values
+            importance_vals = None
+            importance_source = None
+
+            if 'external_shap_importance' in artifacts and artifacts['external_shap_importance'] is not None:
+                importance_vals = artifacts['external_shap_importance']
+                importance_source = "External Test Cohort"
+            elif 'global_shap_importance' in artifacts and artifacts['global_shap_importance'] is not None:
+                importance_vals = artifacts['global_shap_importance']
+                importance_source = "Training Cohort"
+            else:
+                # Fallback: use current patient's absolute SHAP values
+                importance_vals = np.abs(contributions)
+                importance_source = "Current Patient (local)"
+
+            # Ensure importance_vals length matches number of features
+            if len(importance_vals) != len(final_feature_names):
+                st.warning("Importance values length mismatch. Falling back to local values.")
+                importance_vals = np.abs(contributions)
+                importance_source = "Current Patient (local)"
+
+            # Sort descending
+            sorted_idx = np.argsort(importance_vals)[::-1]
+            sorted_names = [final_feature_names[i] for i in sorted_idx]
+            sorted_vals = importance_vals[sorted_idx]
+
+            fig_imp, ax_imp = plt.subplots(figsize=(8, 5))
+            ax_imp.barh(sorted_names, sorted_vals, color='#1f77b4')
+            ax_imp.set_xlabel('mean(|SHAP value|)')
+            ax_imp.set_title(f'Feature Importance ({importance_source})')
+            st.pyplot(fig_imp, bbox_inches='tight')
             plt.clf()
+
+            st.divider()
+
+            # ---- Waterfall Plot ----
+            st.markdown("#### SHAP Waterfall Plot (Local Interpretation)")
+            fig_wf, ax_wf = plt.subplots(figsize=(8, 5))
+            shap.plots.waterfall(explanation, max_display=12, show=False)
+            st.pyplot(fig_wf, bbox_inches='tight')
+            plt.clf()
+
+            # ---- Force Plot ----
+            st.markdown("#### SHAP Force Plot (Interactive)")
+            try:
+                shap_force = shap.plots.force(
+                    explanation.base_values,
+                    explanation.values,
+                    explanation.data,
+                    feature_names=explanation.feature_names,
+                    matplotlib=False,
+                    show=False
+                )
+                if hasattr(shap_force, 'html'):
+                    force_html = shap_force.html()
+                else:
+                    force_html = str(shap_force)
+                shap_html = f"<head>{shap.getjs()}</head><body>{force_html}</body>"
+                components.html(shap_html, height=400, scrolling=True)
+            except Exception as e:
+                st.warning(f"Force plot could not be rendered: {e}")
 
         except Exception as e:
             st.error(f"Prediction error: {e}")
