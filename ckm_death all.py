@@ -12,7 +12,6 @@ import streamlit.components.v1 as components
 warnings.filterwarnings('ignore')
 
 # -------------------- Page configuration --------------------
-# 使用宽屏模式，默认收起侧边栏以留出更多空间 (适配 A4 比例)
 st.set_page_config(
     page_title="All-Cause Mortality Risk Prediction",
     page_icon="🫀",
@@ -20,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 自定义CSS以减少全局内边距和组件间距，使得界面更紧凑
+# Custom CSS for compact layout
 st.markdown("""
     <style>
     .block-container {
@@ -137,7 +136,7 @@ input_data = {}
 with col_left:
     st.markdown("**📝 Patient Characteristics**")
 
-    # Categorical Features (3 columns for compactness)
+    # Categorical Features
     with st.expander("🏷️ Categorical Features", expanded=True):
         cat_cols = st.columns(3)
         for i, col in enumerate(CATEGORICAL_FEATURES):
@@ -152,7 +151,7 @@ with col_left:
                     selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
                     input_data[col] = selected_text
 
-    # Continuous Features (4 columns for compactness)
+    # Continuous Features
     with st.expander("📈 Continuous Features", expanded=True):
         cont_cols = st.columns(4)
         for i, col in enumerate(CONTINUOUS_FEATURES):
@@ -212,7 +211,7 @@ with col_right:
             surv_prob = surv_funcs[0](time_month)
             risk = 1 - surv_prob
 
-            # 动态计算随时间变化的风险阈值 (基于 10年 7.5% 和 20% 的基准)
+            # Dynamic thresholds based on 10-year baseline (7.5% and 20%)
             t_years = st.session_state.time_years
             threshold_low = (0.075 / 10.0) * t_years
             threshold_high = (0.20 / 10.0) * t_years
@@ -236,31 +235,31 @@ with col_right:
             with c_surv:
                 st.metric("Survival Probability", f"{surv_prob * 100:.1f}%")
 
-            # 3. Clinical Recommendations (动态阈值 + 最新循证指南)
-            with st.expander("🩺 循证临床建议 (Evidence-Based Clinical Recommendations)", expanded=False):
+            # 3. Clinical Recommendations (English)
+            with st.expander("🩺 Evidence-Based Clinical Recommendations", expanded=False):
                 st.caption(
                     f"📝 *Based on AHA CKM Syndrome Guidelines. Risk thresholds dynamically adjusted for {t_years:.1f} years.*")
 
                 if risk < threshold_low:
                     st.success(f"""
-                    **📉 低风险 (Low Risk, < {threshold_low * 100:.1f}%)** —— **一级预防与生活方式干预**
-                    - **生活方式 (Life's Essential 8)**：坚持地中海或DASH饮食，每周≥150分钟中等强度运动，戒烟，维持理想体重与腰围。
-                    - **定期筛查**：建议每 1-3 年复查一次血压、血脂、空腹血糖/HbA1c 及肾功能(eGFR和UACR)。
-                    - **社会决定因素 (SDOH)**：评估并改善睡眠质量、精神压力等潜在不良因素。
+                    **📉 Low Risk (< {threshold_low * 100:.1f}%)** —— **Primary Prevention & Lifestyle Modification**
+                    - **Life's Essential 8**: Adopt a Mediterranean or DASH diet, engage in ≥150 min/week of moderate-intensity exercise, quit smoking, and maintain ideal body weight and waist circumference.
+                    - **Regular Screening**: Check blood pressure, lipids, fasting glucose/HbA1c, and kidney function (eGFR and UACR) every 1–3 years.
+                    - **Social Determinants of Health (SDOH)**: Assess and address sleep quality, psychological stress, and other adverse factors.
                     """)
                 elif risk < threshold_high:
                     st.warning(f"""
-                    **📊 中等风险 (Intermediate Risk, {threshold_low * 100:.1f}% - < {threshold_high * 100:.1f}%)** —— **医患共享决策与早期药物介入**
-                    - **心肾保护 (Renal & CV Protection)**：若合并2型糖尿病或慢性肾病(CKD)，指南推荐启动 **SGLT2抑制剂** 或 **GLP-1 RA**。
-                    - **危险因素控制**：建议启动中等强度他汀类药物；严格控制血压（目标 <130/80 mmHg，首选 ACEI/ARB）。
-                    - **共病筛查**：积极筛查代谢相关脂肪性肝病 (MASLD) 及阻塞性睡眠呼吸暂停 (OSA)。
+                    **📊 Intermediate Risk ({threshold_low * 100:.1f}% – < {threshold_high * 100:.1f}%)** —— **Shared Decision-Making & Early Pharmacotherapy**
+                    - **Cardiorenal Protection**: For patients with type 2 diabetes or chronic kidney disease (CKD), guideline recommends initiating **SGLT2 inhibitors** or **GLP-1 receptor agonists**.
+                    - **Risk Factor Control**: Start moderate‑intensity statin therapy; strictly control blood pressure (target <130/80 mmHg, preferably with ACEI/ARB).
+                    - **Comorbidity Screening**: Actively screen for metabolic dysfunction‑associated steatotic liver disease (MASLD) and obstructive sleep apnea (OSA).
                     """)
                 else:
                     st.error(f"""
-                    **⚠️ 高风险 (High Risk, ≥ {threshold_high * 100:.1f}%)** —— **多学科协作与强化药物治疗 (GDMT)**
-                    - **MDT 管理**：强烈建议心血管、肾脏、内分泌等多学科团队联合制定个体化干预方案。
-                    - **强化 GDMT**：全面应用心肾保护药物（SGLT2i、ACEI/ARB、GLP-1 RA，或 ns-MRA）；强化降脂（高强度他汀，必要时联用 PCSK9i）。
-                    - **密切随访**：警惕 CKM 3-4 期（心衰、重度CKD）事件发生，建议每 3 个月进行靶器官功能评估。
+                    **⚠️ High Risk (≥ {threshold_high * 100:.1f}%)** —— **Multidisciplinary Team (MDT) Management & Intensified Guideline‑Directed Medical Therapy (GDMT)**
+                    - **MDT Approach**: Strongly recommend a multidisciplinary team (cardiology, nephrology, endocrinology) to develop personalized intervention plans.
+                    - **Intensified GDMT**: Fully implement cardiorenal protective agents (SGLT2i, ACEI/ARB, GLP-1 RA, or ns-MRA); intensify lipid‑lowering therapy (high‑intensity statin, with PCSK9i if needed).
+                    - **Close Follow‑up**: Be alert for progression to CKM stages 3–4 (heart failure, severe CKD); assess target organ function every 3 months.
                     """)
 
             # 4. SHAP Interpretation (Local Only)
@@ -291,15 +290,14 @@ with col_right:
                 feature_names=DISPLAY_FEATURE_NAMES
             )
 
-            # 直接使用 Local 计算
+            # Local importance (absolute SHAP values)
             importance_vals = np.abs(contributions)
 
-            # Sort and plot compact charts
-            sorted_idx = np.argsort(importance_vals)[::-1][:10]  # 仅显示Top 10以节省空间
+            # Sort and plot Top 10 for compactness
+            sorted_idx = np.argsort(importance_vals)[::-1][:10]
             sorted_names = [DISPLAY_FEATURE_NAMES[i] for i in sorted_idx]
             sorted_vals = importance_vals[sorted_idx]
 
-            # 安排在一行展示柱状图和瀑布图
             chart_col1, chart_col2 = st.columns(2)
 
             with chart_col1:
