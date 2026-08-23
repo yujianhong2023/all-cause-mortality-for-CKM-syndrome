@@ -159,8 +159,12 @@ with col_left:
             unit = unit_map.get(col, '')
             label = f"{col} ({unit})" if unit else col
             with cont_cols[i % 4]:
-                input_data[col] = st.number_input(label, value=float(default_val),
-                                                  step=1.0 if default_val > 10 else 0.1, key=f"cont_{col}")
+                input_data[col] = st.number_input(
+                    label,
+                    value=float(default_val),
+                    step=1.0 if default_val > 10 else 0.1,
+                    key=f"cont_{col}"
+                )
 
     # Prediction Time
     st.markdown("**⏱ Prediction Time**")
