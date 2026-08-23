@@ -46,7 +46,6 @@ if not os.path.exists(os.path.join(MODEL_DIR, MODEL_FILE)):
     st.error(f"❌ Model file '{MODEL_FILE}' not found. Please ensure it is in the same directory.")
     sys.exit(f"Error: Model file '{MODEL_FILE}' not found.")
 
-
 # -------------------- Load Model Artifacts --------------------
 @st.cache_resource
 def load_artifacts():
@@ -71,6 +70,7 @@ CATEGORICAL_FEATURES = artifacts.get('categorical_features')
 CONTINUOUS_FEATURES = artifacts.get('continuous_features')
 
 # -------------------- Display name and unit mappings --------------------
+# 确保 UA (Uric Acid) 及其单位被正确映射
 unit_map = {
     'AGE': 'years', 'PLT': '×10⁹/L', 'MCV': 'fL', 'RDW': '%', 'SII': '×10⁹/L',
     'ABSI': '', 'HBA1C': '%', 'GLB': 'g/L', 'MON': '×10⁹/L', 'EGFR': 'mL/min/1.73m²',
@@ -107,6 +107,7 @@ cat_option_map = {
     'CANCER': {'Yes': 1, 'No': 0}
 }
 
+# 包含 UA 的默认值
 default_cont_vals = {
     'AGE': 65.0, 'HBA1C': 5.6, 'ABSI': 0.08, 'EGFR': 90.0, 'RDW': 13.2,
     'SHR': 2.5, 'MCV': 92.0, 'GLB': 28.0, 'PLT': 250.0, 'CRP': 1.5,
@@ -123,7 +124,6 @@ def get_display_feature_names():
     for col in CATEGORICAL_FEATURES:
         names.append(cat_display_label.get(col, col))
     return names
-
 
 DISPLAY_FEATURE_NAMES = get_display_feature_names()
 
