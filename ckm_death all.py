@@ -70,6 +70,11 @@ FEATURES = artifacts.get('features')
 CATEGORICAL_FEATURES = artifacts.get('categorical_features')
 CONTINUOUS_FEATURES = artifacts.get('continuous_features')
 
+# Debug: Print feature counts
+st.sidebar.write(f"Total Features: {len(FEATURES)}")
+st.sidebar.write(f"Continuous: {len(CONTINUOUS_FEATURES)}")
+st.sidebar.write(f"Categorical: {len(CATEGORICAL_FEATURES)}")
+
 # -------------------- Display name and unit mappings --------------------
 unit_map = {
     'AGE': 'years', 'PLT': '×10⁹/L', 'MCV': 'fL', 'RDW': '%', 'SII': '×10⁹/L',
@@ -184,21 +189,44 @@ with col_right:
 
     if predict_clicked:
         try:
-            # 1. Prepare Data - Use numpy arrays directly to avoid index issues
-            # Build continuous features array in the correct order
+            # IMPORTANT: Use the continuous features from the model artifacts
+            # The scaler was fit on these exact features during training
+            model_continuous_features = CONTINUOUS_FEATURES
+
+            # Check if UA is actually in the model's continuous features
+            # If not, we need to exclude it from scaling
+            scaler_features_count = scaler.n_features_in_
+
+            st.sidebar.write(f"Scaler expects: {scaler_features_count} features")
+            st.sidebar.write(f"Model continuous features: {len(model_continuous_features)}")
+            st.sidebar.write(f"Model continuous list: {model_continuous_features}")
+
+            # Build continuous features array matching scaler expectations
             cont_values = []
-            for col in CONTINUOUS_FEATURES:
+            cont_feature_names_used = []
+
+            # Use the exact features that the scaler was trained on
+            # This should match the model's continuous features
+            for col in model_continuous_features:
                 if col in input_data:
                     cont_values.append(float(input_data[col]))
+                    cont_feature_names_used.append(col)
                 else:
                     st.error(f"Missing continuous feature: {col}")
                     st.stop()
+
+            # Make sure we have the right number of features
+            if len(cont_values) != scaler_features_count:
+                st.error(f"Feature count mismatch: {len(cont_values)} provided, {scaler_features_count} expected")
+                st.write(f"Features: {cont_feature_names_used}")
+                st.stop()
+
             cont_array = np.array(cont_values).reshape(1, -1)
 
             # Standardize continuous features
             cont_scaled = scaler.transform(cont_array)
 
-            # Build categorical features array in the correct order
+            # Build categorical features array
             cat_values = []
             for col in CATEGORICAL_FEATURES:
                 if col in input_data:
@@ -217,6 +245,9 @@ with col_right:
 
             # Combine features
             X_final = np.hstack([cont_scaled, cat_array])
+
+            st.sidebar.write(f"Final X shape: {X_final.shape}")
+            st.sidebar.write(f"Model expects: {model.coef_.shape[0]} features")
 
             # 2. Predict Survival
             surv_funcs = model.predict_survival_function(X_final)
