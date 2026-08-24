@@ -70,10 +70,8 @@ FEATURES = artifacts.get('features')
 CATEGORICAL_FEATURES = artifacts.get('categorical_features')
 CONTINUOUS_FEATURES = artifacts.get('continuous_features')
 
-# Debug: Print feature counts
-st.sidebar.write(f"Total Features: {len(FEATURES)}")
-st.sidebar.write(f"Continuous: {len(CONTINUOUS_FEATURES)}")
-st.sidebar.write(f"Categorical: {len(CATEGORICAL_FEATURES)}")
+# Get the number of features the scaler expects (should be 16 now)
+SCALER_FEATURES_COUNT = scaler.n_features_in_
 
 # -------------------- Display name and unit mappings --------------------
 unit_map = {
@@ -156,7 +154,7 @@ with col_left:
                     selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
                     input_data[col] = selected_text
 
-    # Continuous Features
+    # Continuous Features (16 features including UA)
     with st.expander("📈 Continuous Features", expanded=True):
         cont_cols = st.columns(4)
         for i, col in enumerate(CONTINUOUS_FEATURES):
@@ -189,36 +187,26 @@ with col_right:
 
     if predict_clicked:
         try:
-            # IMPORTANT: Use the continuous features from the model artifacts
-            # The scaler was fit on these exact features during training
+            # Use the continuous features from the model
             model_continuous_features = CONTINUOUS_FEATURES
 
-            # Check if UA is actually in the model's continuous features
-            # If not, we need to exclude it from scaling
-            scaler_features_count = scaler.n_features_in_
+            # Debug info in sidebar
+            st.sidebar.write(f"✅ Scaler expects: {SCALER_FEATURES_COUNT} features")
+            st.sidebar.write(f"✅ Model continuous: {len(model_continuous_features)} features")
 
-            st.sidebar.write(f"Scaler expects: {scaler_features_count} features")
-            st.sidebar.write(f"Model continuous features: {len(model_continuous_features)}")
-            st.sidebar.write(f"Model continuous list: {model_continuous_features}")
-
-            # Build continuous features array matching scaler expectations
+            # Build continuous features array
             cont_values = []
-            cont_feature_names_used = []
-
-            # Use the exact features that the scaler was trained on
-            # This should match the model's continuous features
             for col in model_continuous_features:
                 if col in input_data:
                     cont_values.append(float(input_data[col]))
-                    cont_feature_names_used.append(col)
                 else:
                     st.error(f"Missing continuous feature: {col}")
                     st.stop()
 
-            # Make sure we have the right number of features
-            if len(cont_values) != scaler_features_count:
-                st.error(f"Feature count mismatch: {len(cont_values)} provided, {scaler_features_count} expected")
-                st.write(f"Features: {cont_feature_names_used}")
+            # Verify feature count matches scaler expectation
+            if len(cont_values) != SCALER_FEATURES_COUNT:
+                st.error(f"Feature count mismatch: {len(cont_values)} provided, {SCALER_FEATURES_COUNT} expected")
+                st.write(f"Features: {model_continuous_features}")
                 st.stop()
 
             cont_array = np.array(cont_values).reshape(1, -1)
@@ -246,8 +234,8 @@ with col_right:
             # Combine features
             X_final = np.hstack([cont_scaled, cat_array])
 
-            st.sidebar.write(f"Final X shape: {X_final.shape}")
-            st.sidebar.write(f"Model expects: {model.coef_.shape[0]} features")
+            st.sidebar.write(f"✅ Final X shape: {X_final.shape}")
+            st.sidebar.write(f"✅ Model expects: {model.coef_.shape[0]} features")
 
             # 2. Predict Survival
             surv_funcs = model.predict_survival_function(X_final)
@@ -284,7 +272,7 @@ with col_right:
             with c_surv:
                 st.metric("Survival Probability", f"{surv_prob * 100:.1f}%")
 
-            # 3. Clinical Recommendations (English)
+            # 3. Clinical Recommendations
             with st.expander("🩺 Evidence-Based Clinical Recommendations", expanded=False):
                 st.caption(
                     f"📝 *Based on AHA CKM Syndrome Guidelines. Risk thresholds dynamically adjusted for {t_years:.1f} years.*")
@@ -311,7 +299,7 @@ with col_right:
                     - **Close Follow‑up**: Be alert for progression to CKM stages 3–4 (heart failure, severe CKD); assess target organ function every 3 months.
                     """)
 
-            # 4. SHAP Interpretation (Local Only)
+            # 4. SHAP Interpretation
             st.markdown("**🔍 SHAP Interpretation (Local)**")
             coefs = model.coef_
             if coefs.ndim > 1:
@@ -339,10 +327,8 @@ with col_right:
                 feature_names=DISPLAY_FEATURE_NAMES
             )
 
-            # Local importance (absolute SHAP values)
+            # Local importance
             importance_vals = np.abs(contributions)
-
-            # Sort and plot Top 10 for compactness
             sorted_idx = np.argsort(importance_vals)[::-1][:10]
             sorted_names = [DISPLAY_FEATURE_NAMES[i] for i in sorted_idx]
             sorted_vals = importance_vals[sorted_idx]
@@ -365,7 +351,7 @@ with col_right:
                 st.pyplot(fig_wf, bbox_inches='tight')
                 plt.clf()
 
-            # Force Plot (compact height)
+            # Force Plot
             try:
                 shap_force = shap.plots.force(
                     explanation.base_values,
