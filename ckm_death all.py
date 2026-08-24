@@ -184,38 +184,39 @@ with col_right:
 
     if predict_clicked:
         try:
-            # 1. Prepare Data - Use the exact feature order from model training
-            # Create DataFrame with features in the exact order as FEATURES list
-            df_input = pd.DataFrame([input_data])
-
-            # Ensure all features are present
-            for col in FEATURES:
-                if col not in df_input.columns:
-                    st.error(f"Missing feature: {col}")
-                    st.stop()
-
-            # Reorder columns to match FEATURES order
-            df_input = df_input[FEATURES]
-
-            # Encode categorical features
-            cat_encoded = []
-            for col in CATEGORICAL_FEATURES:
-                if col in cat_option_map:
-                    val = df_input[col].iloc[0]
-                    cat_encoded.append(int(val))
+            # 1. Prepare Data - Use numpy arrays directly to avoid index issues
+            # Build continuous features array in the correct order
+            cont_values = []
+            for col in CONTINUOUS_FEATURES:
+                if col in input_data:
+                    cont_values.append(float(input_data[col]))
                 else:
-                    val_str = str(df_input[col].iloc[0])
-                    if val_str == 'nan' or val_str == '':
-                        st.error(f"Invalid value for {col}: {val_str}")
-                        st.stop()
-                    cat_encoded.append(label_encoders[col].transform([val_str])[0])
-            cat_encoded = np.array(cat_encoded).reshape(1, -1)
+                    st.error(f"Missing continuous feature: {col}")
+                    st.stop()
+            cont_array = np.array(cont_values).reshape(1, -1)
 
             # Standardize continuous features
-            cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
+            cont_scaled = scaler.transform(cont_array)
+
+            # Build categorical features array in the correct order
+            cat_values = []
+            for col in CATEGORICAL_FEATURES:
+                if col in input_data:
+                    if col in cat_option_map:
+                        cat_values.append(int(input_data[col]))
+                    else:
+                        val_str = str(input_data[col])
+                        if val_str == 'nan' or val_str == '':
+                            st.error(f"Invalid value for {col}: {val_str}")
+                            st.stop()
+                        cat_values.append(label_encoders[col].transform([val_str])[0])
+                else:
+                    st.error(f"Missing categorical feature: {col}")
+                    st.stop()
+            cat_array = np.array(cat_values).reshape(1, -1)
 
             # Combine features
-            X_final = np.hstack([cont_scaled, cat_encoded])
+            X_final = np.hstack([cont_scaled, cat_array])
 
             # 2. Predict Survival
             surv_funcs = model.predict_survival_function(X_final)
@@ -291,14 +292,14 @@ with col_right:
             # Build display data
             display_data = []
             for col in CONTINUOUS_FEATURES:
-                display_data.append(df_input[col].iloc[0])
+                display_data.append(input_data[col])
             for col in CATEGORICAL_FEATURES:
                 if col in cat_option_map:
-                    val = df_input[col].iloc[0]
+                    val = input_data[col]
                     inv_map = {v: k for k, v in cat_option_map[col].items()}
                     display_data.append(inv_map.get(val, str(val)))
                 else:
-                    display_data.append(df_input[col].iloc[0])
+                    display_data.append(input_data[col])
 
             explanation = shap.Explanation(
                 values=contributions,
@@ -363,6 +364,9 @@ with col_right:
 
         except Exception as e:
             st.error(f"Prediction error: {e}")
+            import traceback
+
+            st.code(traceback.format_exc())
             st.info("Please check that all inputs are complete and valid.")
     else:
         st.info("👈 Fill in patient characteristics and click **Predict** to view results.")
