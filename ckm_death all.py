@@ -59,23 +59,20 @@ FEATURES = artifacts.get('features', [])
 CATEGORICAL_FEATURES = artifacts.get('categorical_features', [])
 CONTINUOUS_FEATURES = artifacts.get('continuous_features', [])
 
-# 关键：获取scaler实际训练时使用的特征列表（如果保存了的话）
+# Get scaler features (actual features used during training)
 scaler_features = artifacts.get('scaler_features', None)
 if scaler_features is None:
-    # 如果模型中没有保存scaler_features，则从CONTINUOUS_FEATURES中取前scaler.n_features_in_个
-    st.warning("模型未保存'scaler_features'，将使用CONTINUOUS_FEATURES的前N个特征。")
     scaler_features = CONTINUOUS_FEATURES[:scaler.n_features_in_]
 
-# 验证特征数量
 if len(scaler_features) != scaler.n_features_in_:
-    st.error(f"特征数量不匹配: scaler_features有{len(scaler_features)}个，scaler期望{scaler.n_features_in_}个")
-    sys.exit("特征数量不匹配")
+    st.error(f"Feature count mismatch: scaler_features has {len(scaler_features)}, scaler expects {scaler.n_features_in_}")
+    sys.exit("Feature count mismatch")
 
-# 显示调试信息
-st.sidebar.write(f"✅ Scaler期望特征数: {scaler.n_features_in_}")
-st.sidebar.write(f"✅ 使用的连续特征: {scaler_features}")
+# Sidebar debug info (optional, can be removed)
+st.sidebar.write(f"✅ Scaler expects: {scaler.n_features_in_} features")
+st.sidebar.write(f"✅ Features used: {scaler_features}")
 
-# -------------------- 显示名称映射 --------------------
+# -------------------- Display name mappings --------------------
 unit_map = {
     'AGE': 'years', 'PLT': '×10⁹/L', 'MCV': 'fL', 'RDW': '%', 'SII': '×10⁹/L',
     'ABSI': '', 'HBA1C': '%', 'GLB': 'g/L', 'MON': '×10⁹/L', 'EGFR': 'mL/min/1.73m²',
@@ -110,7 +107,7 @@ default_cont_vals = {
     'SII': 500.0, 'MON': 0.4, 'AST': 22.0, 'BMI': 24.5, 'TC': 185.0, 'UA': 5.0
 }
 
-# 构建显示特征名称列表（用于SHAP）
+# Build display names for SHAP (continuous + categorical)
 display_names = []
 for col in scaler_features:
     unit = unit_map.get(col, '')
@@ -126,7 +123,7 @@ input_data = {}
 with col_left:
     st.markdown("**📝 Patient Characteristics**")
 
-    # 分类特征
+    # Categorical features
     with st.expander("🏷️ Categorical Features", expanded=True):
         cat_cols = st.columns(3)
         for i, col in enumerate(CATEGORICAL_FEATURES):
@@ -141,7 +138,7 @@ with col_left:
                     selected = st.selectbox(display_label, options, key=f"cat_{col}")
                     input_data[col] = selected
 
-    # 连续特征：使用scaler_features（实际scaler训练用的特征）
+    # Continuous features (using scaler_features)
     with st.expander("📈 Continuous Features", expanded=True):
         cont_cols = st.columns(4)
         for i, col in enumerate(scaler_features):
@@ -153,7 +150,7 @@ with col_left:
                                                   step=1.0 if default_val > 10 else 0.1,
                                                   key=f"cont_{col}")
 
-    # 预测时间
+    # Prediction Time
     st.markdown("**⏱ Prediction Time**")
     if 'time_years' not in st.session_state:
         st.session_state.time_years = 5.0
@@ -169,12 +166,12 @@ with col_left:
 
     predict_clicked = st.button("📊 Predict & Show SHAP", type="primary", use_container_width=True)
 
-# -------------------- 预测与结果 --------------------
+# -------------------- Prediction & Results --------------------
 with col_right:
     st.markdown("**📊 Results & Interpretation**")
     if predict_clicked:
         try:
-            # 按scaler_features顺序构建连续特征数组
+            # Build continuous array
             cont_values = []
             for col in scaler_features:
                 if col in input_data:
@@ -185,7 +182,7 @@ with col_right:
             cont_array = np.array(cont_values).reshape(1, -1)
             cont_scaled = scaler.transform(cont_array)
 
-            # 分类特征
+            # Build categorical array
             cat_values = []
             for col in CATEGORICAL_FEATURES:
                 if col in input_data:
@@ -201,7 +198,7 @@ with col_right:
 
             X_final = np.hstack([cont_scaled, cat_array])
 
-            # 预测
+            # --- Survival prediction ---
             surv_funcs = model.predict_survival_function(X_final)
             time_month = int(round(st.session_state.time_years * 12))
             max_month = int(surv_funcs[0].x[-1])
@@ -211,7 +208,7 @@ with col_right:
             surv_prob = surv_funcs[0](time_month)
             risk = 1 - surv_prob
 
-            # 风险阈值
+            # Dynamic thresholds (10-year baseline: 7.5% and 20%)
             t_years = st.session_state.time_years
             threshold_low = (0.075 / 10.0) * t_years
             threshold_high = (0.20 / 10.0) * t_years
@@ -223,6 +220,7 @@ with col_right:
             else:
                 color, level = "red", "High"
 
+            # Display metrics
             st.markdown(f"**Risk at {time_month} Months (~{t_years:.1f} Years)**")
             c_risk, c_surv = st.columns(2)
             with c_risk:
@@ -231,24 +229,43 @@ with col_right:
             with c_surv:
                 st.metric("Survival Probability", f"{surv_prob * 100:.1f}%")
 
-            # 临床建议
+            # --- Clinical Recommendations (English) ---
             with st.expander("🩺 Evidence-Based Clinical Recommendations", expanded=False):
                 if risk < threshold_low:
-                    st.success("**Low Risk** — Primary Prevention & Lifestyle Modification...")
+                    st.success(f"""
+                    **📉 Low Risk** (< {threshold_low*100:.1f}%) – **Primary Prevention & Lifestyle Modification**
+                    - Adopt a Mediterranean or DASH diet.
+                    - Engage in ≥150 min/week of moderate-intensity exercise.
+                    - Maintain ideal body weight and waist circumference.
+                    - Screen blood pressure, lipids, glucose/HbA1c, and kidney function (eGFR, UACR) every 1–3 years.
+                    - Address sleep quality and psychosocial stress.
+                    """)
                 elif risk < threshold_high:
-                    st.warning("**Intermediate Risk** — Shared Decision-Making & Early Pharmacotherapy...")
+                    st.warning(f"""
+                    **📊 Intermediate Risk** ({threshold_low*100:.1f}% – < {threshold_high*100:.1f}%) – **Shared Decision-Making & Early Pharmacotherapy**
+                    - For T2DM or CKD, consider initiating **SGLT2 inhibitors** or **GLP-1 receptor agonists**.
+                    - Start moderate‑intensity statin therapy; target BP <130/80 mmHg (prefer ACEi/ARB).
+                    - Screen for MASLD and obstructive sleep apnea.
+                    - Discuss lifestyle intensification with patient.
+                    """)
                 else:
-                    st.error("**High Risk** — Multidisciplinary Team Management & Intensified GDMT...")
+                    st.error(f"""
+                    **⚠️ High Risk** (≥ {threshold_high*100:.1f}%) – **Multidisciplinary Team Management & Intensified GDMT**
+                    - Involve cardiology, nephrology, and endocrinology specialists.
+                    - Full implementation of cardiorenal protective agents (SGLT2i, ACEi/ARB, GLP-1 RA, ns-MRA).
+                    - High‑intensity statin; consider PCSK9i if needed.
+                    - Close follow‑up every 3 months; monitor for progression to CKM stages 3–4.
+                    """)
 
-            # SHAP分析
-            st.markdown("**🔍 SHAP Interpretation**")
+            # --- SHAP Interpretation ---
+            st.markdown("**🔍 SHAP Interpretation (Local)**")
             coefs = model.coef_
             if coefs.ndim > 1:
                 coefs = coefs[:, 0]
             contributions = X_final[0] * coefs
             base_value = 0.0
 
-            # 显示数据
+            # Build display data
             display_data = []
             for col in scaler_features:
                 display_data.append(input_data[col])
@@ -266,18 +283,53 @@ with col_right:
                 feature_names=display_names
             )
 
-            # 重要性图
-            import matplotlib.pyplot as plt
-            importance = np.abs(contributions)
-            sorted_idx = np.argsort(importance)[::-1][:10]
-            fig, ax = plt.subplots(figsize=(4, 2.5))
-            ax.barh([display_names[i] for i in sorted_idx[::-1]], importance[sorted_idx[::-1]], color='#1f77b4')
-            ax.set_xlabel('|SHAP|')
-            ax.set_title('Top 10 Features')
-            st.pyplot(fig)
-            plt.clf()
+            # --- Waterfall and Bar Plot (side by side) ---
+            col_wf, col_bar = st.columns(2)
 
-            # 特征汇总表
+            with col_wf:
+                st.markdown("**Waterfall Plot**")
+                try:
+                    shap.plots.waterfall(explanation, max_display=10, show=False)
+                    plt.tight_layout()
+                    st.pyplot(plt.gcf())
+                    plt.clf()
+                except Exception as e:
+                    st.warning(f"Waterfall plot error: {e}")
+
+            with col_bar:
+                st.markdown("**Top 10 Feature Importance**")
+                importance = np.abs(contributions)
+                sorted_idx = np.argsort(importance)[::-1][:10]
+                fig_bar, ax_bar = plt.subplots(figsize=(5, 4))
+                ax_bar.barh([display_names[i] for i in sorted_idx[::-1]],
+                            importance[sorted_idx[::-1]], color='#1f77b4')
+                ax_bar.set_xlabel('|SHAP|')
+                ax_bar.set_title('Top 10 Features')
+                plt.tight_layout()
+                st.pyplot(fig_bar)
+                plt.clf()
+
+            # --- Force Plot (full width, interactive) ---
+            st.markdown("**SHAP Force Plot**")
+            try:
+                force_plot = shap.plots.force(
+                    explanation.base_values,
+                    explanation.values,
+                    explanation.data,
+                    feature_names=explanation.feature_names,
+                    matplotlib=False,
+                    show=False
+                )
+                if hasattr(force_plot, 'html'):
+                    force_html = force_plot.html()
+                else:
+                    force_html = str(force_plot)
+                shap_html = f"<head>{shap.getjs()}</head><body>{force_html}</body>"
+                components.html(shap_html, height=200, scrolling=True)
+            except Exception as e:
+                st.warning(f"Force plot error: {e}")
+
+            # --- Feature Summary Table (optional) ---
             with st.expander("📋 Input Features Summary", expanded=False):
                 summary_df = pd.DataFrame({
                     'Feature': FEATURES,
