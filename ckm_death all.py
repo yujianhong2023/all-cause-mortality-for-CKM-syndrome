@@ -151,13 +151,8 @@ with col_left:
                     selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
                     input_data[col] = selected_text
 
-    # Continuous Features (with UA explicitly included)
+    # Continuous Features
     with st.expander("📈 Continuous Features", expanded=True):
-        # Ensure UA is in CONTINUOUS_FEATURES
-        if 'UA' not in CONTINUOUS_FEATURES:
-            st.warning("⚠️ UA not found in CONTINUOUS_FEATURES. Adding it manually.")
-            CONTINUOUS_FEATURES.append('UA')
-
         cont_cols = st.columns(4)
         for i, col in enumerate(CONTINUOUS_FEATURES):
             default_val = default_cont_vals.get(col, 50.0)
@@ -189,20 +184,37 @@ with col_right:
 
     if predict_clicked:
         try:
-            # 1. Prepare Data
+            # 1. Prepare Data - Use the exact feature order from model training
+            # Create DataFrame with features in the exact order as FEATURES list
             df_input = pd.DataFrame([input_data])
 
+            # Ensure all features are present
+            for col in FEATURES:
+                if col not in df_input.columns:
+                    st.error(f"Missing feature: {col}")
+                    st.stop()
+
+            # Reorder columns to match FEATURES order
+            df_input = df_input[FEATURES]
+
+            # Encode categorical features
             cat_encoded = []
             for col in CATEGORICAL_FEATURES:
                 if col in cat_option_map:
                     val = df_input[col].iloc[0]
                     cat_encoded.append(int(val))
                 else:
-                    val_str = df_input[col].iloc[0]
+                    val_str = str(df_input[col].iloc[0])
+                    if val_str == 'nan' or val_str == '':
+                        st.error(f"Invalid value for {col}: {val_str}")
+                        st.stop()
                     cat_encoded.append(label_encoders[col].transform([val_str])[0])
             cat_encoded = np.array(cat_encoded).reshape(1, -1)
 
+            # Standardize continuous features
             cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
+
+            # Combine features
             X_final = np.hstack([cont_scaled, cat_encoded])
 
             # 2. Predict Survival
@@ -351,5 +363,6 @@ with col_right:
 
         except Exception as e:
             st.error(f"Prediction error: {e}")
+            st.info("Please check that all inputs are complete and valid.")
     else:
         st.info("👈 Fill in patient characteristics and click **Predict** to view results.")
