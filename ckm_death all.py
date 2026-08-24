@@ -151,8 +151,13 @@ with col_left:
                     selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
                     input_data[col] = selected_text
 
-    # Continuous Features (including UA)
+    # Continuous Features (with UA explicitly included)
     with st.expander("📈 Continuous Features", expanded=True):
+        # Ensure UA is in CONTINUOUS_FEATURES
+        if 'UA' not in CONTINUOUS_FEATURES:
+            st.warning("⚠️ UA not found in CONTINUOUS_FEATURES. Adding it manually.")
+            CONTINUOUS_FEATURES.append('UA')
+
         cont_cols = st.columns(4)
         for i, col in enumerate(CONTINUOUS_FEATURES):
             default_val = default_cont_vals.get(col, 50.0)
@@ -340,7 +345,7 @@ with col_right:
                 feature_summary = pd.DataFrame({
                     'Feature': FEATURES,
                     'Type': ['Continuous' if f in CONTINUOUS_FEATURES else 'Categorical' for f in FEATURES],
-                    'Value': [input_data[f] for f in FEATURES]
+                    'Value': [input_data.get(f, 'N/A') for f in FEATURES]
                 })
                 st.dataframe(feature_summary, use_container_width=True)
 
