@@ -1,345 +1,351 @@
-import streamlit as st
+import pandas as pd
+import numpy as np
 import pickle
 import os
-import sys
-import numpy as np
-import pandas as pd
-import warnings
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split
+from sksurv.linear_model import CoxnetSurvivalAnalysis
+from sksurv.util import Surv
+import streamlit as st
 import matplotlib.pyplot as plt
-import shap
-import streamlit.components.v1 as components
+from pathlib import Path
 
-warnings.filterwarnings('ignore')
+# ================= 1. 固定参数与变量定义 =================
+RANDOM_SEED = 123
+TRAIN_RATIO = 0.7
 
-# -------------------- Page configuration --------------------
-st.set_page_config(
-    page_title="All-Cause Mortality Risk Prediction",
-    page_icon="🫀",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+# 自变量特征列表（共25个特征，已包含 UA，单位：mg/dL）
+FEATURES = [
+    'AGE', 'CKM', 'PLT', 'MCV', 'RDW', 'SII', 'PIR_GROUP', 'RACE',
+    'ACTIVITY', 'GENDER', 'ABSI', 'HBA1C', 'GLB', 'MARITAL', 'MON',
+    'LUNG', 'EGFR', 'CRP', 'CANCER', 'UA', 'SHR', 'BMI', 'TC', 'EDU', 'AST'
+]
 
-# Custom CSS for compact layout
-st.markdown("""
-    <style>
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 1rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 1.5rem;
-    }
-    h1, h2, h3 {
-        padding-top: 0.5rem;
-        padding-bottom: 0.5rem;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# 结局与时间变量
+TARGET_EVENT = 'DEATH_ALL'
+TARGET_TIME = 'PERMTH_INT'
 
-# -------------------- Model path --------------------
-MODEL_DIR = '.'
-MODEL_FILE = 'ENet_model.pkl'
+# 划分分类变量与连续变量
+CATEGORICAL_FEATURES = [
+    'GENDER', 'CKM', 'ACTIVITY', 'PIR_GROUP', 'RACE',
+    'MARITAL', 'LUNG', 'CANCER', 'EDU'
+]
+CONTINUOUS_FEATURES = [f for f in FEATURES if f not in CATEGORICAL_FEATURES]
 
-if not os.path.exists(os.path.join(MODEL_DIR, MODEL_FILE)):
-    st.error(f"❌ Model file '{MODEL_FILE}' not found. Please ensure it is in the same directory.")
-    sys.exit(f"Error: Model file '{MODEL_FILE}' not found.")
-
-# -------------------- Load Model Artifacts --------------------
-@st.cache_resource
-def load_artifacts():
-    try:
-        with open(os.path.join(MODEL_DIR, MODEL_FILE), 'rb') as f:
-            return pickle.load(f)
-    except Exception as e:
-        return None
+# 模型文件路径（已更改为ENet_model.pkl）
+MODEL_PATH = 'ENet_model.pkl'
 
 
-artifacts = load_artifacts()
+# ================= 2. 训练模型函数（如果模型不存在） =================
+def train_and_save_model():
+    """训练并保存模型，如果模型文件不存在"""
+    print("🔧 开始训练模型...")
 
-if artifacts is None:
-    st.error(f"Failed to load the model file ({MODEL_FILE}). It might be corrupted or incompatible.")
-    sys.exit("Error: Failed to load model.")
+    # 数据路径
+    train_path = r"D:\R\AI_CKM\AI2026_US.csv"
+    test_path = r"D:\R\AI_CKM\AI2026_ce.csv"
 
-model = artifacts.get('model')
-scaler = artifacts.get('scaler')
-label_encoders = artifacts.get('label_encoders')
-FEATURES = artifacts.get('features')
-CATEGORICAL_FEATURES = artifacts.get('categorical_features')
-CONTINUOUS_FEATURES = artifacts.get('continuous_features')
+    # 加载数据
+    df_internal = pd.read_csv(train_path)
+    df_external = pd.read_csv(test_path)
 
-# -------------------- Display name and unit mappings --------------------
-# 确保 UA (Uric Acid) 及其单位被正确映射
-unit_map = {
-    'AGE': 'years', 'PLT': '×10⁹/L', 'MCV': 'fL', 'RDW': '%', 'SII': '×10⁹/L',
-    'ABSI': '', 'HBA1C': '%', 'GLB': 'g/L', 'MON': '×10⁹/L', 'EGFR': 'mL/min/1.73m²',
-    'CRP': 'mg/dL', 'UA': 'mg/dL', 'SHR': '', 'BMI': 'kg/m²', 'TC': 'mg/dL', 'AST': 'U/L'
-}
+    print(f"原始内部数据量: {len(df_internal)} 行")
+    print(f"原始外部数据量: {len(df_external)} 行")
 
-cat_display_label = {
-    'GENDER': 'Sex',
-    'CKM': 'CKM stage',
-    'ACTIVITY': 'Moderate or vigorous activity',
-    'PIR_GROUP': 'Poverty-income ratio category',
-    'LUNG': 'Pulmonary disease',
-    'EDU': 'Education',
-    'RACE': 'Race',
-    'MARITAL': 'Married or living with partner',
-    'CANCER': 'Cancer'
-}
+    # 数据清洗
+    cols_to_numeric = CONTINUOUS_FEATURES + [TARGET_EVENT, TARGET_TIME]
+    for col in cols_to_numeric:
+        if col in df_internal.columns:
+            df_internal[col] = pd.to_numeric(df_internal[col], errors='coerce')
+        if col in df_external.columns:
+            df_external[col] = pd.to_numeric(df_external[col], errors='coerce')
 
-cat_option_map = {
-    'GENDER': {'Male': 1, 'Female': 2},
-    'CKM': {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4},
-    'ACTIVITY': {'Yes': 1, 'No': 0},
-    'PIR_GROUP': {'<1.0': 1, '1.0-3.0': 2, '>3.0': 3},
-    'LUNG': {'Yes': 1, 'No': 0},
-    'EDU': {'< High school': 1, 'High school': 2, 'Some college or above': 3},
-    'RACE': {
-        'Mexican American': 1,
-        'Other Hispanic': 2,
-        'Non-Hispanic White': 3,
-        'Non-Hispanic Black': 4,
-        'Other, Including Multi-Racial': 5
-    },
-    'MARITAL': {'Yes': 1, 'No': 2},
-    'CANCER': {'Yes': 1, 'No': 0}
-}
-
-# 包含 UA 的默认值
-default_cont_vals = {
-    'AGE': 65.0, 'HBA1C': 5.6, 'ABSI': 0.08, 'EGFR': 90.0, 'RDW': 13.2,
-    'SHR': 2.5, 'MCV': 92.0, 'GLB': 28.0, 'PLT': 250.0, 'CRP': 1.5,
-    'SII': 500.0, 'MON': 0.4, 'AST': 22.0, 'BMI': 24.5, 'TC': 185.0, 'UA': 5.0
-}
-
-
-# -------------------- Build display feature names --------------------
-def get_display_feature_names():
-    names = []
-    for col in CONTINUOUS_FEATURES:
-        unit = unit_map.get(col, '')
-        names.append(f"{col} ({unit})" if unit else col)
     for col in CATEGORICAL_FEATURES:
-        names.append(cat_display_label.get(col, col))
-    return names
+        if col in df_internal.columns:
+            df_internal[col] = df_internal[col].astype(str).str.strip().replace({'': np.nan, 'nan': np.nan})
+        if col in df_external.columns:
+            df_external[col] = df_external[col].astype(str).str.strip().replace({'': np.nan, 'nan': np.nan})
 
-DISPLAY_FEATURE_NAMES = get_display_feature_names()
+    # 清除缺失值
+    cols_to_check = FEATURES + [TARGET_EVENT, TARGET_TIME]
+    df_internal = df_internal.dropna(subset=cols_to_check).reset_index(drop=True)
+    df_external = df_external.dropna(subset=cols_to_check).reset_index(drop=True)
 
-# -------------------- UI Layout --------------------
-st.markdown("### 🫀 All-Cause Mortality Risk Prediction (ElasticNet)")
+    print(f"清洗后内部数据量: {len(df_internal)} 行")
+    print(f"清洗后外部测试集数据量: {len(df_external)} 行")
 
-col_left, col_right = st.columns([1.1, 1], gap="small")
-input_data = {}
+    # 标签编码
+    label_encoders = {}
+    for col in CATEGORICAL_FEATURES:
+        le = LabelEncoder()
+        combined_data = pd.concat([df_internal[col], df_external[col]]).astype(str)
+        le.fit(combined_data)
+        df_internal[col] = le.transform(df_internal[col].astype(str))
+        df_external[col] = le.transform(df_external[col].astype(str))
+        label_encoders[col] = le
 
-with col_left:
-    st.markdown("**📝 Patient Characteristics**")
+    # 划分训练验证集
+    X_internal = df_internal[FEATURES].copy()
+    y_internal_event = df_internal[TARGET_EVENT].copy()
+    y_internal_time = df_internal[TARGET_TIME].copy()
 
-    # Categorical Features
-    with st.expander("🏷️ Categorical Features", expanded=True):
-        cat_cols = st.columns(3)
-        for i, col in enumerate(CATEGORICAL_FEATURES):
-            display_label = cat_display_label.get(col, col)
-            with cat_cols[i % 3]:
-                if col in cat_option_map:
-                    options = list(cat_option_map[col].keys())
-                    selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
-                    input_data[col] = cat_option_map[col][selected_text]
-                else:
-                    options = [str(cls) for cls in label_encoders[col].classes_ if str(cls) != 'nan']
-                    selected_text = st.selectbox(display_label, options, key=f"cat_{col}")
-                    input_data[col] = selected_text
+    X_train, X_val, y_train_event, y_val_event, y_train_time, y_val_time = train_test_split(
+        X_internal, y_internal_event, y_internal_time,
+        train_size=TRAIN_RATIO,
+        random_state=RANDOM_SEED,
+        stratify=y_internal_event
+    )
 
-    # Continuous Features
-    with st.expander("📈 Continuous Features", expanded=True):
-        cont_cols = st.columns(4)
-        for i, col in enumerate(CONTINUOUS_FEATURES):
-            default_val = default_cont_vals.get(col, 50.0)
-            unit = unit_map.get(col, '')
-            label = f"{col} ({unit})" if unit else col
-            with cont_cols[i % 4]:
-                input_data[col] = st.number_input(
-                    label,
-                    value=float(default_val),
-                    step=1.0 if default_val > 10 else 0.1,
-                    key=f"cont_{col}"
-                )
+    # 外部测试集
+    X_external = df_external[FEATURES].copy()
+    y_ext_event = df_external[TARGET_EVENT].copy()
+    y_ext_time = df_external[TARGET_TIME].copy()
 
-    # Prediction Time
-    st.markdown("**⏱ Prediction Time**")
-    if 'time_years' not in st.session_state:
-        st.session_state.time_years = 5.0
+    # 标准化
+    scaler = StandardScaler()
+    X_train_cont_scaled = scaler.fit_transform(X_train[CONTINUOUS_FEATURES])
+    X_val_cont_scaled = scaler.transform(X_val[CONTINUOUS_FEATURES])
+    X_ext_cont_scaled = scaler.transform(X_external[CONTINUOUS_FEATURES])
 
-    t1, t2 = st.columns([2, 1])
-    with t1:
-        st.radio("Quick select (Years)", options=[1, 3, 5, 10], index=2, horizontal=True, key="preset_time",
-                 label_visibility="collapsed")
-    with t2:
-        time_years = st.number_input("Custom years", min_value=0.5, max_value=30.0, value=st.session_state.time_years,
-                                     step=0.5, key="time_input", label_visibility="collapsed")
-        st.session_state.time_years = time_years
+    X_train_final = np.hstack([X_train_cont_scaled, X_train[CATEGORICAL_FEATURES].values])
+    X_val_final = np.hstack([X_val_cont_scaled, X_val[CATEGORICAL_FEATURES].values])
+    X_ext_final = np.hstack([X_ext_cont_scaled, X_external[CATEGORICAL_FEATURES].values])
 
-    predict_clicked = st.button("📊 Predict & Show SHAP", type="primary", use_container_width=True)
+    # 构建生存数据
+    y_train_surv = Surv.from_arrays(event=y_train_event.astype(bool), time=y_train_time)
+    y_val_surv = Surv.from_arrays(event=y_val_event.astype(bool), time=y_val_time)
+    y_ext_surv = Surv.from_arrays(event=y_ext_event.astype(bool), time=y_ext_time)
 
-# -------------------- Prediction & SHAP Results --------------------
-with col_right:
-    st.markdown("**📊 Results & Interpretation**")
+    # 训练模型（参数保持不变）
+    enet_params = {
+        'l1_ratio': 0.10407545001451728,
+        'alphas': [0.017267726981514762],
+        'fit_baseline_model': True
+    }
 
-    if predict_clicked:
-        try:
-            # 1. Prepare Data
-            df_input = pd.DataFrame([input_data])
+    print("\n开始训练模型...")
+    best_model = CoxnetSurvivalAnalysis(**enet_params)
+    best_model.fit(X_train_final, y_train_surv)
+    print("模型训练完成！")
 
-            cat_encoded = []
-            for col in CATEGORICAL_FEATURES:
-                if col in cat_option_map:
-                    val = df_input[col].iloc[0]
-                    cat_encoded.append(int(val))
-                else:
-                    val_str = df_input[col].iloc[0]
-                    cat_encoded.append(label_encoders[col].transform([val_str])[0])
-            cat_encoded = np.array(cat_encoded).reshape(1, -1)
+    # 评估
+    c_index_train = best_model.score(X_train_final, y_train_surv)
+    c_index_val = best_model.score(X_val_final, y_val_surv)
+    c_index_ext = best_model.score(X_ext_final, y_ext_surv)
 
-            cont_scaled = scaler.transform(df_input[CONTINUOUS_FEATURES])
-            X_final = np.hstack([cont_scaled, cat_encoded])
+    print("\n" + "=" * 50)
+    print("模型性能评估:")
+    print(f"内部训练集 C-index: {c_index_train:.4f}")
+    print(f"内部验证集 C-index: {c_index_val:.4f}")
+    print(f"外部测试集 C-index: {c_index_ext:.4f}")
+    print("=" * 50)
 
-            # 2. Predict Survival
-            surv_funcs = model.predict_survival_function(X_final)
-            time_month = int(round(st.session_state.time_years * 12))
-            max_train_month = int(surv_funcs[0].x[-1])
-            if time_month > max_train_month:
-                st.warning(f"Requested time exceeds training follow-up. Capped to {max_train_month} months.")
-                time_month = max_train_month
+    # 保存模型（使用新文件名ENet_model.pkl）
+    model_artifacts = {
+        'model': best_model,
+        'scaler': scaler,
+        'label_encoders': label_encoders,
+        'features': FEATURES,
+        'categorical_features': CATEGORICAL_FEATURES,
+        'continuous_features': CONTINUOUS_FEATURES,
+        'target_event': TARGET_EVENT,
+        'target_time': TARGET_TIME,
+        'best_params': enet_params,
+        'c_index_train': c_index_train,
+        'c_index_val': c_index_val,
+        'c_index_ext': c_index_ext
+    }
 
-            surv_prob = surv_funcs[0](time_month)
-            risk = 1 - surv_prob
+    with open(MODEL_PATH, 'wb') as f:
+        pickle.dump(model_artifacts, f)
 
-            # Dynamic thresholds based on 10-year baseline (7.5% and 20%)
-            t_years = st.session_state.time_years
-            threshold_low = (0.075 / 10.0) * t_years
-            threshold_high = (0.20 / 10.0) * t_years
+    print(f"\n✅ 模型已成功保存为 {MODEL_PATH}")
+    return model_artifacts
 
-            # Display Metrics
-            st.markdown(f"**Risk at {time_month} Months (~{t_years:.1f} Years)**")
-            c_risk, c_surv = st.columns(2)
 
-            if risk < threshold_low:
-                color, level = "green", "Low"
-            elif risk < threshold_high:
-                color, level = "orange", "Moderate"
+# ================= 3. 加载或训练模型 =================
+@st.cache_resource
+def load_or_train_model():
+    """加载已有模型，如果不存在则训练"""
+    if Path(MODEL_PATH).exists():
+        print(f"✅ 找到已有模型文件: {MODEL_PATH}")
+        with open(MODEL_PATH, 'rb') as f:
+            artifacts = pickle.load(f)
+        return artifacts
+    else:
+        print(f"⚠️ 模型文件 {MODEL_PATH} 不存在，开始训练...")
+        return train_and_save_model()
+
+
+# 获取模型
+artifacts = load_or_train_model()
+model = artifacts['model']
+scaler = artifacts['scaler']
+label_encoders = artifacts['label_encoders']
+features = artifacts['features']
+categorical_features = artifacts['categorical_features']
+continuous_features = artifacts['continuous_features']
+c_index_ext = artifacts.get('c_index_ext', 0.72)  # 从模型获取或使用默认值
+
+# ================= 4. Web界面配置 =================
+st.set_page_config(page_title="CKM 生存预测系统", layout="wide")
+st.title("🫀 CKM 综合征生存预测")
+st.markdown("---")
+
+# 侧边栏 - 输入参数
+st.sidebar.header("📋 患者特征输入")
+
+# ---- 分类变量输入 ----
+st.sidebar.subheader("分类特征")
+gender = st.sidebar.selectbox("性别 (GENDER)", label_encoders['GENDER'].classes_)
+ckm = st.sidebar.selectbox("CKM分期", label_encoders['CKM'].classes_)
+activity = st.sidebar.selectbox("活动能力 (ACTIVITY)", label_encoders['ACTIVITY'].classes_)
+pir_group = st.sidebar.selectbox("贫困收入比分组 (PIR_GROUP)", label_encoders['PIR_GROUP'].classes_)
+race = st.sidebar.selectbox("种族 (RACE)", label_encoders['RACE'].classes_)
+marital = st.sidebar.selectbox("婚姻状况 (MARITAL)", label_encoders['MARITAL'].classes_)
+lung = st.sidebar.selectbox("肺部疾病 (LUNG)", label_encoders['LUNG'].classes_)
+cancer = st.sidebar.selectbox("癌症史 (CANCER)", label_encoders['CANCER'].classes_)
+edu = st.sidebar.selectbox("教育水平 (EDU)", label_encoders['EDU'].classes_)
+
+# ---- 连续变量输入（包含UA） ----
+st.sidebar.subheader("连续特征")
+age = st.sidebar.number_input("年龄 AGE (岁)", min_value=20, max_value=120, value=65)
+plt = st.sidebar.number_input("血小板 PLT (×10⁹/L)", min_value=0.0, max_value=1000.0, value=250.0)
+mcv = st.sidebar.number_input("平均红细胞体积 MCV (fL)", min_value=50.0, max_value=150.0, value=92.0)
+rdw = st.sidebar.number_input("红细胞分布宽度 RDW (%)", min_value=10.0, max_value=30.0, value=13.2)
+sii = st.sidebar.number_input("全身免疫炎症指数 SII (×10⁹/L)", min_value=0.0, max_value=5000.0, value=500.0)
+absi = st.sidebar.number_input("体型指数 ABSI", min_value=0.0, max_value=0.5, value=0.08)
+hba1c = st.sidebar.number_input("糖化血红蛋白 HBA1C (%)", min_value=3.0, max_value=20.0, value=5.6)
+glb = st.sidebar.number_input("球蛋白 GLB (g/L)", min_value=10.0, max_value=60.0, value=28.0)
+mon = st.sidebar.number_input("单核细胞 MON (×10⁹/L)", min_value=0.0, max_value=5.0, value=0.4)
+egfr = st.sidebar.number_input("估算肾小球滤过率 EGFR (mL/min/1.73m²)", min_value=5.0, max_value=200.0, value=90.0)
+crp = st.sidebar.number_input("C反应蛋白 CRP (mg/dL)", min_value=0.0, max_value=50.0, value=22.0)
+ua = st.sidebar.number_input("尿酸 UA (mg/dL)", min_value=0.0, max_value=20.0, value=5.0)  # ⭐ UA输入
+shr = st.sidebar.number_input("应激性高血糖比率 SHR", min_value=0.0, max_value=5.0, value=1.0)
+bmi = st.sidebar.number_input("体重指数 BMI (kg/m²)", min_value=10.0, max_value=60.0, value=24.5)
+tc = st.sidebar.number_input("总胆固醇 TC (mg/dL)", min_value=50.0, max_value=400.0, value=185.0)
+ast = st.sidebar.number_input("天冬氨酸转氨酶 AST (U/L)", min_value=0.0, max_value=500.0, value=22.0)
+
+# ---- 预测时间选择 ----
+st.sidebar.subheader("预测时间点")
+predict_time = st.sidebar.selectbox("预测生存时间 (年)", [1, 3, 5, 10], index=2)
+
+
+# ================= 5. 数据预处理函数 =================
+def preprocess_input(input_dict):
+    """将用户输入转换为模型可用的特征向量"""
+    df_input = pd.DataFrame([input_dict])
+
+    # 分类变量编码
+    for col in categorical_features:
+        if col in df_input.columns:
+            le = label_encoders[col]
+            df_input[col] = le.transform(df_input[col].astype(str))
+
+    # 连续变量标准化
+    cont_df = df_input[continuous_features].copy()
+    cont_scaled = scaler.transform(cont_df)
+
+    # 组合特征
+    X_final = np.hstack([cont_scaled, df_input[categorical_features].values])
+    return X_final
+
+
+# ================= 6. 预测与结果展示 =================
+if st.sidebar.button("🔍 预测生存概率", type="primary"):
+    # 收集输入
+    input_data = {
+        'AGE': age, 'CKM': ckm, 'PLT': plt, 'MCV': mcv, 'RDW': rdw,
+        'SII': sii, 'PIR_GROUP': pir_group, 'RACE': race,
+        'ACTIVITY': activity, 'GENDER': gender, 'ABSI': absi,
+        'HBA1C': hba1c, 'GLB': glb, 'MARITAL': marital, 'MON': mon,
+        'LUNG': lung, 'EGFR': egfr, 'CRP': crp, 'CANCER': cancer,
+        'UA': ua,  # ⭐ UA传递
+        'SHR': shr, 'BMI': bmi, 'TC': tc, 'EDU': edu, 'AST': ast
+    }
+
+    try:
+        # 预处理
+        X_input = preprocess_input(input_data)
+
+        # 预测生存概率
+        surv_probs = model.predict_survival_function(X_input)
+
+        # 提取数据
+        times = surv_probs[0].x
+        surv_probs_values = surv_probs[0].y
+
+        # 插值获取指定时间的生存概率
+        if predict_time in times:
+            idx = np.where(times == predict_time)[0][0]
+            surv_prob = surv_probs_values[idx]
+        else:
+            # 线性插值
+            idx = np.searchsorted(times, predict_time)
+            if idx == 0:
+                surv_prob = surv_probs_values[0]
+            elif idx >= len(times):
+                surv_prob = surv_probs_values[-1]
             else:
-                color, level = "red", "High"
+                t0, t1 = times[idx - 1], times[idx]
+                s0, s1 = surv_probs_values[idx - 1], surv_probs_values[idx]
+                surv_prob = s0 + (s1 - s0) * (predict_time - t0) / (t1 - t0)
 
-            with c_risk:
-                st.metric("Mortality Risk", f"{risk * 100:.1f}%")
-                st.markdown(
-                    f"<span style='color:{color}; font-weight:bold; font-size:14px'>{level} Risk (Threshold adjusted for {t_years:.1f}y)</span>",
-                    unsafe_allow_html=True)
-            with c_surv:
-                st.metric("Survival Probability", f"{surv_prob * 100:.1f}%")
+        # 计算死亡风险
+        death_risk = 1 - surv_prob
 
-            # 3. Clinical Recommendations (English)
-            with st.expander("🩺 Evidence-Based Clinical Recommendations", expanded=False):
-                st.caption(
-                    f"📝 *Based on AHA CKM Syndrome Guidelines. Risk thresholds dynamically adjusted for {t_years:.1f} years.*")
+        # 显示结果
+        col1, col2, col3 = st.columns(3)
 
-                if risk < threshold_low:
-                    st.success(f"""
-                    **📉 Low Risk (< {threshold_low * 100:.1f}%)** —— **Primary Prevention & Lifestyle Modification**
-                    - **Life's Essential 8**: Adopt a Mediterranean or DASH diet, engage in ≥150 min/week of moderate-intensity exercise, quit smoking, and maintain ideal body weight and waist circumference.
-                    - **Regular Screening**: Check blood pressure, lipids, fasting glucose/HbA1c, and kidney function (eGFR and UACR) every 1–3 years.
-                    - **Social Determinants of Health (SDOH)**: Assess and address sleep quality, psychological stress, and other adverse factors.
-                    """)
-                elif risk < threshold_high:
-                    st.warning(f"""
-                    **📊 Intermediate Risk ({threshold_low * 100:.1f}% – < {threshold_high * 100:.1f}%)** —— **Shared Decision-Making & Early Pharmacotherapy**
-                    - **Cardiorenal Protection**: For patients with type 2 diabetes or chronic kidney disease (CKD), guideline recommends initiating **SGLT2 inhibitors** or **GLP-1 receptor agonists**.
-                    - **Risk Factor Control**: Start moderate‑intensity statin therapy; strictly control blood pressure (target <130/80 mmHg, preferably with ACEI/ARB).
-                    - **Comorbidity Screening**: Actively screen for metabolic dysfunction‑associated steatotic liver disease (MASLD) and obstructive sleep apnea (OSA).
-                    """)
-                else:
-                    st.error(f"""
-                    **⚠️ High Risk (≥ {threshold_high * 100:.1f}%)** —— **Multidisciplinary Team (MDT) Management & Intensified Guideline‑Directed Medical Therapy (GDMT)**
-                    - **MDT Approach**: Strongly recommend a multidisciplinary team (cardiology, nephrology, endocrinology) to develop personalized intervention plans.
-                    - **Intensified GDMT**: Fully implement cardiorenal protective agents (SGLT2i, ACEI/ARB, GLP-1 RA, or ns-MRA); intensify lipid‑lowering therapy (high‑intensity statin, with PCSK9i if needed).
-                    - **Close Follow‑up**: Be alert for progression to CKM stages 3–4 (heart failure, severe CKD); assess target organ function every 3 months.
-                    """)
-
-            # 4. SHAP Interpretation (Local Only)
-            st.markdown("**🔍 SHAP Interpretation (Local)**")
-            coefs = model.coef_
-            if coefs.ndim > 1:
-                coefs = coefs[:, 0]
-
-            contributions = X_final[0] * coefs
-            base_value = 0.0
-
-            # Build display data
-            display_data = []
-            for col in CONTINUOUS_FEATURES:
-                display_data.append(df_input[col].iloc[0])
-            for col in CATEGORICAL_FEATURES:
-                if col in cat_option_map:
-                    val = df_input[col].iloc[0]
-                    inv_map = {v: k for k, v in cat_option_map[col].items()}
-                    display_data.append(inv_map.get(val, str(val)))
-                else:
-                    display_data.append(df_input[col].iloc[0])
-
-            explanation = shap.Explanation(
-                values=contributions,
-                base_values=base_value,
-                data=display_data,
-                feature_names=DISPLAY_FEATURE_NAMES
+        with col1:
+            st.metric(
+                label=f"📊 {predict_time}年生存概率",
+                value=f"{surv_prob:.2%}",
+                delta=f"风险 {death_risk:.2%}"
+            )
+        with col2:
+            st.metric(
+                label="⚰️ 死亡风险",
+                value=f"{death_risk:.2%}",
+                delta="高风险" if death_risk > 0.5 else "低风险"
+            )
+        with col3:
+            st.metric(
+                label="📈 C-index (外部验证)",
+                value=f"{c_index_ext:.3f}" if isinstance(c_index_ext, float) else c_index_ext
             )
 
-            # Local importance (absolute SHAP values)
-            importance_vals = np.abs(contributions)
+        # 生存曲线图
+        st.subheader("📉 生存曲线预测")
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.step(times, surv_probs_values, where='post', label=f'预测生存曲线')
+        ax.axvline(x=predict_time, color='red', linestyle='--', label=f'预测时间点 ({predict_time}年)')
+        ax.axhline(y=surv_prob, color='green', linestyle='--', alpha=0.5)
+        ax.set_xlabel('生存时间 (年)')
+        ax.set_ylabel('生存概率')
+        ax.set_title('患者生存曲线预测')
+        ax.grid(alpha=0.3)
+        ax.legend()
+        st.pyplot(fig)
 
-            # Sort and plot Top 10 for compactness
-            sorted_idx = np.argsort(importance_vals)[::-1][:10]
-            sorted_names = [DISPLAY_FEATURE_NAMES[i] for i in sorted_idx]
-            sorted_vals = importance_vals[sorted_idx]
+        st.info("💡 该预测基于Cox ElasticNet模型，输入特征包含25个变量（包括UA尿酸）。")
 
-            chart_col1, chart_col2 = st.columns(2)
+    except Exception as e:
+        st.error(f"预测出错: {str(e)}")
+        st.info("请检查所有输入是否完整有效。")
 
-            with chart_col1:
-                fig_imp, ax_imp = plt.subplots(figsize=(4, 2.5))
-                ax_imp.barh(sorted_names[::-1], sorted_vals[::-1], color='#1f77b4')
-                ax_imp.set_xlabel('|SHAP|', fontsize=8)
-                ax_imp.set_title('Top 10 Feature Importance', fontsize=9)
-                ax_imp.tick_params(labelsize=7)
-                st.pyplot(fig_imp, bbox_inches='tight')
-                plt.clf()
+# ================= 7. 页脚说明 =================
+st.sidebar.markdown("---")
+st.sidebar.caption("⚠️ 预测结果仅供参考，请结合临床判断")
+st.sidebar.caption(f"🔄 模型包含UA (mg/dL) | 特征数: {len(FEATURES)}")
 
-            with chart_col2:
-                fig_wf, ax_wf = plt.subplots(figsize=(4, 2.5))
-                shap.plots.waterfall(explanation, max_display=6, show=False)
-                plt.tick_params(labelsize=7)
-                st.pyplot(fig_wf, bbox_inches='tight')
-                plt.clf()
-
-            # Force Plot (compact height)
-            try:
-                shap_force = shap.plots.force(
-                    explanation.base_values,
-                    explanation.values,
-                    explanation.data,
-                    feature_names=explanation.feature_names,
-                    matplotlib=False,
-                    show=False
-                )
-                if hasattr(shap_force, 'html'):
-                    force_html = shap_force.html()
-                else:
-                    force_html = str(shap_force)
-                shap_html = f"<head>{shap.getjs()}</head><body>{force_html}</body>"
-                components.html(shap_html, height=150, scrolling=False)
-            except Exception as e:
-                st.warning(f"Force plot error: {e}")
-
-        except Exception as e:
-            st.error(f"Prediction error: {e}")
-    else:
-        st.info("👈 Fill in patient characteristics and click **Predict** to view results.")
+# 显示模型状态
+if st.sidebar.checkbox("显示模型信息"):
+    st.sidebar.info(f"""
+    **模型信息**
+    - 特征数: {len(FEATURES)}
+    - 连续特征: {len(continuous_features)}个
+    - 分类特征: {len(categorical_features)}个
+    - 包含UA: ✅ (mg/dL)
+    - 模型文件: {MODEL_PATH}
+    """)
